@@ -215,3 +215,12 @@ We implemented complete interactive synchronization linking the Custom SVG chart
   - **Timeline Charts (Line Chart):** Clicking on any time-series slice filters the entire dashboard and Trace Explorer list to display only traces executed within that specific hourly timeline window.
 * **Active Filters Summary Bar:**
   - Added a visual filter banner right under the main header listing all active sidebar/timeline filter badges with individual clear (`×`) buttons, plus a "Clear All" button for one-click resets.
+
+---
+
+## 12. Ingestion Pipeline & Storage Engine Metrics
+We implemented a metrics monitoring system tracking ingest throughput and database storage efficiency:
+* **In-Memory Pipeline Telemetry:** Declared `pipelineMetrics` inside [kafka.ts](file:///Users/him/Desktop/mini-posthog-task-main/apps/api/src/kafka.ts) tracking total published events, last publish latency, batch counts, total ClickHouse insert duration, and average consumer write throughput.
+* **Storage Engine Telemetry:** Exposes ClickHouse storage efficiency by querying the native `system.parts` table to fetch the exact rows count and compression size on disk (in KB/MB) for the active `events` table.
+* **Fallbacks:** Automatically falls back to simple table row counts if running in memory or in test mode under DuckDB.
+* **Metrics Endpoint:** Registered a new GET endpoint `/api/pipeline/metrics` in [index.ts](file:///Users/him/Desktop/mini-posthog-task-main/apps/api/src/index.ts) allowing you to inspect real-time queue lag, batch latencies, and storage metrics.

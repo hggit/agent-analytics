@@ -5,6 +5,32 @@ import { incrementDbRevision } from './capture';
 const KAFKA_BROKER = process.env.KAFKA_BROKER || 'localhost:9092';
 const TOPIC = 'agent-events';
 
+export interface IngestionMetrics {
+  totalEventsPublished: number;
+  totalPublishLatencyMs: number;
+  lastPublishLatencyMs: number;
+  lastPublishCount: number;
+  
+  totalEventsInserted: number;
+  totalBatchesProcessed: number;
+  totalInsertLatencyMs: number;
+  lastInsertLatencyMs: number;
+  lastInsertCount: number;
+}
+
+export const pipelineMetrics: IngestionMetrics = {
+  totalEventsPublished: 0,
+  totalPublishLatencyMs: 0,
+  lastPublishLatencyMs: 0,
+  lastPublishCount: 0,
+  
+  totalEventsInserted: 0,
+  totalBatchesProcessed: 0,
+  totalInsertLatencyMs: 0,
+  lastInsertLatencyMs: 0,
+  lastInsertCount: 0
+};
+
 export interface KafkaService {
   connect(): Promise<void>;
   publishEvents(events: any[]): Promise<void>;
@@ -52,6 +78,7 @@ class RealKafkaService implements KafkaService {
   }
 
   public async publishEvents(events: any[]): Promise<void> {
+    const startTime = Date.now();
     const messages = events.map(e => ({
       key: e.traceId,
       value: JSON.stringify(e)
@@ -65,6 +92,12 @@ class RealKafkaService implements KafkaService {
         messages: chunk
       });
     }
+
+    const latency = Date.now() - startTime;
+    pipelineMetrics.totalEventsPublished += events.length;
+    pipelineMetrics.totalPublishLatencyMs += latency;
+    pipelineMetrics.lastPublishLatencyMs = latency;
+    pipelineMetrics.lastPublishCount = events.length;
   }
 
   public async startConsumer(): Promise<void> {
@@ -102,8 +135,17 @@ class RealKafkaService implements KafkaService {
 
         if (events.length > 0) {
           try {
+            const startInsert = Date.now();
             await dbEngine.insertEvents(events);
+            const latency = Date.now() - startInsert;
             incrementDbRevision();
+
+            // Record consumer metrics
+            pipelineMetrics.totalEventsInserted += events.length;
+            pipelineMetrics.totalBatchesProcessed += 1;
+            pipelineMetrics.totalInsertLatencyMs += latency;
+            pipelineMetrics.lastInsertLatencyMs = latency;
+            pipelineMetrics.lastInsertCount = events.length;
           } catch (err) {
             console.error('[Kafka Consumer] Failed to write batch to ClickHouse:', err);
             throw err; // Trigger standard Kafka retry
@@ -137,11 +179,27 @@ class MockKafkaService implements KafkaService {
   }
 
   public async publishEvents(events: any[]): Promise<void> {
+    const startTime = Date.now();
+    pipelineMetrics.totalEventsPublished += events.length;
+    pipelineMetrics.lastPublishCount = events.length;
+
     // In mock mode, we immediately insert to mock dbEngine to simulate the pipeline
     setImmediate(async () => {
       try {
+        const startInsert = Date.now();
         await dbEngine.insertEvents(events);
+        const latency = Date.now() - startInsert;
         incrementDbRevision();
+
+        // Record consumer metrics
+        pipelineMetrics.totalEventsInserted += events.length;
+        pipelineMetrics.totalBatchesProcessed += 1;
+        pipelineMetrics.totalInsertLatencyMs += latency;
+        pipelineMetrics.lastInsertLatencyMs = latency;
+        pipelineMetrics.lastInsertCount = events.length;
+
+        pipelineMetrics.totalPublishLatencyMs += (Date.now() - startTime);
+        pipelineMetrics.lastPublishLatencyMs = (Date.now() - startTime);
       } catch (err) {
         console.error('[Kafka Mock] Insert error:', err);
       }
@@ -161,3 +219,4 @@ export const kafkaService: KafkaService =
   (process.env.NODE_ENV === 'test' || process.argv.some(arg => arg.includes('run-tests')))
     ? new MockKafkaService() 
     : new RealKafkaService();
+

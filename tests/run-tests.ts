@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { validateSQL, listTracesHandler, getKpisHandler } from '../apps/api/src/query';
+import { validateSQL, listTracesHandler, getKpisHandler, getPipelineMetricsHandler } from '../apps/api/src/query';
 import { initDatabase } from '../apps/api/src/db';
 import { captureHandler } from '../apps/api/src/capture';
 
@@ -291,6 +291,29 @@ async function runTests() {
   assert.strictEqual(kpisRes.data.totalCostUsd, 0.0035);
 
   console.log('  ✅ Test 4 Passed: Filters scoped correctly at trace-level and KPIs calculated accurately.');
+
+  // Test 5: Ingestion Pipeline & Storage Metrics
+  console.log('  └─ Running Test 5: Pipeline & Storage Metrics...');
+  let metricsRes: any;
+  const mockMetricsReq = {} as any;
+  const mockMetricsRes = {
+    status: (code: number) => {
+      assert.strictEqual(code, 200);
+      return mockMetricsRes;
+    },
+    json: (data: any) => {
+      metricsRes = JSON.parse(JSON.stringify(data));
+    }
+  } as any;
+
+  await getPipelineMetricsHandler(mockMetricsReq, mockMetricsRes);
+  assert.strictEqual(metricsRes.status, 'success');
+  assert.ok(metricsRes.data.metrics);
+  assert.ok(metricsRes.data.database);
+  assert.strictEqual(metricsRes.data.database.totalRows, 6);
+  assert.strictEqual(metricsRes.data.metrics.totalEventsInserted, 6);
+  assert.ok(metricsRes.data.metrics.totalEventsPublished >= 6);
+  console.log('  ✅ Test 5 Passed: Ingestion & storage metrics fetched and validated.');
 
   console.log('🎉 All tests completed successfully!');
 }

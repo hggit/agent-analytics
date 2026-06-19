@@ -9,7 +9,8 @@ import {
   listTracesHandler,
   getTraceDetailsHandler,
   getKpisHandler,
-  getMetadataHandler
+  getMetadataHandler,
+  getPipelineMetricsHandler
 } from './query';
 
 // Add BigInt JSON serialization patch for ClickHouse/DuckDB aggregation results
@@ -34,7 +35,8 @@ app.get('/', (req, res) => {
       kpis: '/api/kpis',
       traces: '/api/traces',
       capture: '/capture',
-      meta: '/api/meta'
+      meta: '/api/meta',
+      pipelineMetrics: '/api/pipeline/metrics'
     }
   });
 });
@@ -50,6 +52,7 @@ app.get('/api/traces', listTracesHandler);
 app.get('/api/traces/:id', getTraceDetailsHandler);
 app.get('/api/kpis', getKpisHandler);
 app.get('/api/meta', getMetadataHandler);
+app.get('/api/pipeline/metrics', getPipelineMetricsHandler);
 
 // Initialize DB, Kafka, and start Express server
 let server: any;

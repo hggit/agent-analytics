@@ -117,6 +117,19 @@ class MockClickHouseEngine implements DbEngineInterface {
 
     const cleanSql = sql.toUpperCase();
 
+    // Mock Pipeline and Storage Metrics queries
+    if (cleanSql.includes('FROM SYSTEM.PARTS')) {
+      return [{
+        size_bytes: this.events.length * 150,
+        total_rows: this.events.length
+      }];
+    }
+    if (cleanSql.includes('COUNT()') || cleanSql.includes('COUNT(*)')) {
+      return [{
+        total_rows: this.events.length
+      }];
+    }
+
     // 1. KPI query
     if (cleanSql.includes('COUNT(DISTINCT TRACEID)') && cleanSql.includes('AVG(')) {
       const traceIds = Array.from(new Set(filteredEvents.map(e => e.traceId)));

@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { dbEngine } from './db';
 import { dbRevision } from './capture';
+import { pipelineMetrics } from './kafka';
 
 // In-memory caches
 interface CachedResult {
@@ -445,3 +446,50 @@ export async function getMetadataHandler(req: Request, res: Response): Promise<v
     res.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
 }
+
+// 7. Endpoint: /api/pipeline/metrics (Retrieve pipeline & database performance statistics)
+export async function getPipelineMetricsHandler(req: Request, res: Response): Promise<void> {
+  try {
+    let sizeBytes = 0;
+    let totalRows = 0;
+    let sizeFormatted = 'N/A (Mock DB)';
+
+    try {
+      // Try to query ClickHouse system table for storage metrics
+      const storageStats = await dbEngine.all(`
+        SELECT 
+          sum(bytes_on_disk) AS size_bytes,
+          sum(rows) AS total_rows
+        FROM system.parts 
+        WHERE table = 'events' AND active = 1;
+      `);
+      if (storageStats && storageStats.length > 0) {
+        sizeBytes = Number(storageStats[0]?.size_bytes || 0);
+        totalRows = Number(storageStats[0]?.total_rows || 0);
+        sizeFormatted = sizeBytes >= 1024 * 1024
+          ? `${(sizeBytes / (1024 * 1024)).toFixed(2)} MB`
+          : `${(sizeBytes / 1024).toFixed(2)} KB`;
+      }
+    } catch (err: any) {
+      // Fallback for DuckDB mock mode
+      const rowCount = await dbEngine.all(`SELECT count() AS total_rows FROM events;`);
+      totalRows = Number(rowCount[0]?.total_rows || 0);
+    }
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        metrics: pipelineMetrics,
+        database: {
+          totalRows,
+          sizeBytes,
+          sizeFormatted
+        }
+      }
+    });
+  } catch (error: any) {
+    console.error('[Get Pipeline Metrics] Error:', error);
+    res.status(500).json({ error: 'Internal Server Error', details: error.message });
+  }
+}
+
