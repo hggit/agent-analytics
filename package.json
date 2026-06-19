@@ -1,0 +1,17 @@
+{
+  "name": "agent-trace-analytics-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "simulator"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev": "npm run dev -w apps/api & npm run dev -w apps/web",
+    "simulate:demo": "npm run simulate -w simulator -- --demo",
+    "simulate:benchmark": "npm run simulate -w simulator -- --benchmark",
+    "test": "ts-node -P tsconfig.test.json tests/run-tests.ts"
+  }
+}
