@@ -67,7 +67,7 @@ Set up ClickHouse and Redpanda containers:
 - Update table schema to ClickHouse table engine format:
   ```sql
   CREATE TABLE IF NOT EXISTS events (
-    eventId       UUID,
+    eventId       String,
     traceId       String,
     runId         String,
     timestamp     DateTime64(3),

@@ -14,7 +14,7 @@ class ClickHouseEngine implements DbEngineInterface {
     this.client = createClient({
       host: process.env.CLICKHOUSE_HOST || 'http://localhost:8123',
       username: process.env.CLICKHOUSE_USER || 'default',
-      password: process.env.CLICKHOUSE_PASSWORD || '',
+      password: process.env.CLICKHOUSE_PASSWORD !== undefined ? process.env.CLICKHOUSE_PASSWORD : 'clickhouse_password',
       database: process.env.CLICKHOUSE_DB || 'default',
     });
   }
@@ -224,29 +224,45 @@ export async function initDatabase(dbPath: string = ''): Promise<DbEngineInterfa
     console.log('[ClickHouse Mock] Mock database engine initialized successfully.');
   } else {
     dbEngine = new ClickHouseEngine();
-    await dbEngine.exec(`
-      CREATE TABLE IF NOT EXISTS events (
-        eventId       UUID,
-        traceId       String,
-        runId         String,
-        timestamp     DateTime64(3),
-        agentName     String,
-        userId        String,
-        eventType     String,
-        stepIndex     Int32,
-        status        Nullable(String),
-        latencyMs     Nullable(Int32),
-        model         Nullable(String),
-        toolName      Nullable(String),
-        inputTokens   Nullable(Int32),
-        outputTokens  Nullable(Int32),
-        costUsd       Nullable(Float64),
-        errorType     Nullable(String),
-        metadata      String
-      ) ENGINE = MergeTree()
-      ORDER BY (agentName, timestamp, eventId);
-    `);
-    console.log('[ClickHouse] ClickHouse database connection initialized successfully.');
+    const maxRetries = 10;
+    const retryIntervalMs = 3000;
+    let retries = 0;
+    while (true) {
+      try {
+        await dbEngine.exec(`
+          CREATE TABLE IF NOT EXISTS events (
+            eventId       String,
+            traceId       String,
+            runId         String,
+            timestamp     DateTime64(3),
+            agentName     String,
+            userId        String,
+            eventType     String,
+            stepIndex     Int32,
+            status        Nullable(String),
+            latencyMs     Nullable(Int32),
+            model         Nullable(String),
+            toolName      Nullable(String),
+            inputTokens   Nullable(Int32),
+            outputTokens  Nullable(Int32),
+            costUsd       Nullable(Float64),
+            errorType     Nullable(String),
+            metadata      String
+          ) ENGINE = MergeTree()
+          ORDER BY (agentName, timestamp, eventId);
+        `);
+        console.log('[ClickHouse] ClickHouse database connection initialized successfully.');
+        break;
+      } catch (err) {
+        retries++;
+        if (retries >= maxRetries) {
+          console.error(`[ClickHouse] Failed to connect after ${maxRetries} attempts. Error:`, err);
+          throw err;
+        }
+        console.warn(`[ClickHouse] Connection failed (attempt ${retries}/${maxRetries}). Retrying in ${retryIntervalMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+      }
+    }
   }
   return dbEngine;
 }

@@ -121,6 +121,7 @@ We migrated the backend architecture from DuckDB to a highly scalable ClickHouse
 ## 7. Updated Test Verification Output
 The unit test suite runs completely mock-integrated and passes successfully:
 ```bash
+56:    npm install
 🧪 Starting Agent Trace Analytics Engine Tests...
   └─ Running Test 1: SDK Batching...
   ✅ Test 1 Passed: SDK batched and flushed correctly.
@@ -133,3 +134,32 @@ The unit test suite runs completely mock-integrated and passes successfully:
   ✅ Test 4 Passed: Filters scoped correctly at trace-level and KPIs calculated accurately.
 🎉 All tests completed successfully!
 ```
+
+---
+
+## 8. Local Docker Ingestion Verification & Run Output
+We successfully verified the entire stack locally using Docker Compose, Redpanda, and ClickHouse:
+* **Resilience & Connection Retry:**
+  - Implemented an automatic connection retry loop with backoff (10 retries, 3s delay) in ClickHouse database initialization and Kafka client connections. This resolves container boot order issues where the API server might start faster than ClickHouse/Redpanda.
+* **Authentication Configuration:**
+  - Explicitly configured `CLICKHOUSE_USER=default` and `CLICKHOUSE_PASSWORD=clickhouse_password` inside the stack. This prevents newer official ClickHouse images from disabling network access for security when passwords are blank.
+* **Telemetry Ingest Verification:**
+  - Ran the telemetry simulator locally (`npm run simulate:demo`).
+  - Events successfully traversed the pipeline: `simulator` -> `api_server` `/capture` -> `Redpanda` message broker -> Node.js Batch Consumer -> `ClickHouse`.
+  - Confirmed 78 rows were successfully written to ClickHouse:
+    ```bash
+    $ curl -u default:clickhouse_password "http://localhost:8123/?query=SELECT%20count()%20FROM%20events"
+    78
+    ```
+  - Confirmed the API aggregation queries execute correctly on the live database:
+    ```json
+    {
+      "status": "success",
+      "data": {
+        "totalTraces": 10,
+        "avgTraceLatencyMs": 10143.3,
+        "errorRate": 30,
+        "totalCostUsd": 0.0410482
+      }
+    }
+    ```

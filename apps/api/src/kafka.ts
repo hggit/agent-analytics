@@ -31,8 +31,24 @@ class RealKafkaService implements KafkaService {
   }
 
   public async connect(): Promise<void> {
-    await this.producer.connect();
-    console.log('[Kafka] Producer connected.');
+    const maxRetries = 10;
+    const retryIntervalMs = 3000;
+    let retries = 0;
+    while (true) {
+      try {
+        await this.producer.connect();
+        console.log('[Kafka] Producer connected.');
+        break;
+      } catch (err) {
+        retries++;
+        if (retries >= maxRetries) {
+          console.error(`[Kafka] Producer failed to connect after ${maxRetries} attempts. Error:`, err);
+          throw err;
+        }
+        console.warn(`[Kafka] Producer connection failed (attempt ${retries}/${maxRetries}). Retrying in ${retryIntervalMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+      }
+    }
   }
 
   public async publishEvents(events: any[]): Promise<void> {
@@ -41,14 +57,34 @@ class RealKafkaService implements KafkaService {
       value: JSON.stringify(e)
     }));
 
-    await this.producer.send({
-      topic: TOPIC,
-      messages
-    });
+    const chunkSize = 1000;
+    for (let i = 0; i < messages.length; i += chunkSize) {
+      const chunk = messages.slice(i, i + chunkSize);
+      await this.producer.send({
+        topic: TOPIC,
+        messages: chunk
+      });
+    }
   }
 
   public async startConsumer(): Promise<void> {
-    await this.consumer.connect();
+    const maxRetries = 10;
+    const retryIntervalMs = 3000;
+    let retries = 0;
+    while (true) {
+      try {
+        await this.consumer.connect();
+        break;
+      } catch (err) {
+        retries++;
+        if (retries >= maxRetries) {
+          console.error(`[Kafka] Consumer failed to connect after ${maxRetries} attempts. Error:`, err);
+          throw err;
+        }
+        console.warn(`[Kafka] Consumer connection failed (attempt ${retries}/${maxRetries}). Retrying in ${retryIntervalMs / 1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, retryIntervalMs));
+      }
+    }
     await this.consumer.subscribe({ topic: TOPIC, fromBeginning: true });
     
     await this.consumer.run({

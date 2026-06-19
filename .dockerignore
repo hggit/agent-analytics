@@ -1,0 +1,11 @@
+node_modules/
+data/
+db.duckdb
+*.duckdb
+*.duckdb.wal
+.DS_Store
+.git
+dist/
+build/
+apps/web/dist/
+packages/sdk/dist/

@@ -78,7 +78,7 @@ export function buildTraceIdFilters(filters: any, tableAlias?: string): { clause
 
     if (minTime) {
       clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_started' AND timestamp >= {timeRangeFilter: DateTime64(3)})`);
-      params.timeRangeFilter = minTime.toISOString();
+      params.timeRangeFilter = minTime.toISOString().replace('T', ' ').replace('Z', '');
     }
   }
 
@@ -150,7 +150,7 @@ async function translateWithGemini(nlQuery: string): Promise<string> {
   const systemPrompt = `You are a ClickHouse SQL expert translating natural language requests into read-only SQL SELECT queries.
 The table name is "events".
 Here is the schema of the "events" table:
-- eventId (UUID)
+- eventId (String)
 - traceId (String)
 - runId (String)
 - timestamp (DateTime64(3))
