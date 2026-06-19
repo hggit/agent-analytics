@@ -556,7 +556,7 @@ body {
   position: fixed;
   right: 0;
   top: 0;
-  width: 600px;
+  width: min(1100px, 90vw);
   height: 100vh;
   background-color: #0E1322;
   border-left: 1px solid var(--border-color);
@@ -733,3 +733,352 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.2);
 }
+
+/* ==========================================================================
+   UI Visual Enhancements (Tooltips, Workflow DAG, Tabs, JSON Inspector)
+   ========================================================================== */
+
+/* Interactive Chart Styles */
+.chart-hover-line {
+  stroke: rgba(139, 92, 246, 0.4);
+  stroke-width: 1.5;
+  stroke-dasharray: 4 2;
+  pointer-events: none;
+}
+
+.chart-tooltip-bg {
+  fill: #0F172A;
+  stroke: var(--color-primary-light);
+  stroke-width: 1.5;
+  filter: drop-shadow(0px 8px 16px rgba(0, 0, 0, 0.5));
+}
+
+.chart-hover-dot {
+  stroke: #FFF;
+  stroke-width: 2;
+  box-shadow: 0 0 12px var(--color-primary);
+  pointer-events: none;
+  transition: r 0.1s ease;
+}
+
+.chart-slice-trigger {
+  fill: transparent;
+  cursor: crosshair;
+}
+
+/* Workflow DAG Flow Layout */
+.workflow-dag-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.dag-scroll-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  padding: 16px;
+  background: rgba(5, 7, 13, 0.4);
+  border: 1px solid var(--border-color);
+  border-radius: 14px;
+  scrollbar-width: thin;
+}
+
+.dag-node {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  background: rgba(17, 24, 39, 0.9);
+  border: 1.5px solid var(--border-color);
+  min-width: 140px;
+  max-width: 200px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.dag-node:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.dag-node.active {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.3);
+  background: rgba(139, 92, 246, 0.05);
+}
+
+.dag-node-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.dag-node-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-primary);
+}
+
+.dag-node-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Color coding by node type */
+.dag-node.start {
+  border-color: var(--color-accent);
+  background: rgba(59, 130, 246, 0.05);
+}
+.dag-node.end-success {
+  border-color: var(--color-success);
+  background: rgba(16, 185, 129, 0.05);
+}
+.dag-node.end-failed {
+  border-color: var(--color-error);
+  background: rgba(239, 68, 68, 0.05);
+}
+.dag-node.llm {
+  border-color: #8B5CF6;
+  background: rgba(139, 92, 246, 0.03);
+}
+.dag-node.tool {
+  border-color: #10B981;
+  background: rgba(16, 185, 129, 0.03);
+}
+.dag-node.error {
+  border-color: var(--color-error);
+  background: rgba(239, 68, 68, 0.05);
+}
+.dag-node.retry {
+  border-color: var(--color-warning);
+  background: rgba(245, 158, 11, 0.05);
+}
+
+/* Flow Connectors */
+.dag-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 18px;
+  flex-shrink: 0;
+  animation: pulseConnector 2s infinite ease-in-out;
+}
+
+@keyframes pulseConnector {
+  0% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.1) translateX(2px); opacity: 0.8; color: var(--color-primary-light); }
+  100% { transform: scale(1); opacity: 0.4; }
+}
+
+/* Tabs layout for Timeline step cards */
+.step-tabs-container {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-color);
+  padding-bottom: 8px;
+}
+
+.step-tab-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.step-tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.step-tab-btn.active {
+  color: white;
+  background: var(--color-primary);
+}
+
+/* JSON syntax viewer styling */
+.json-payload-pre {
+  background: #05070D !important;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #A5F3FC;
+  overflow-x: auto;
+  max-height: 250px;
+  white-space: pre-wrap;
+}
+
+.timeline-step-card {
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.timeline-step-card.active-highlight {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 10px rgba(139, 92, 246, 0.15);
+  background: rgba(139, 92, 246, 0.03);
+}
+
+/* Trace Overall Summary Card */
+.trace-summary-card {
+  background: linear-gradient(135deg, rgba(30, 41, 59, 0.5), rgba(15, 23, 42, 0.6));
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 20px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.trace-summary-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.trace-summary-label {
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 700;
+}
+
+.trace-summary-value {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.trace-summary-subvalue {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+/* Structured Step Card layouts */
+.step-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 10px;
+  margin-bottom: 12px;
+}
+
+.step-summary-metric {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-metric-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.step-metric-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.step-preview-container {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.step-preview-title {
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.step-preview-quote {
+  background: rgba(255, 255, 255, 0.03);
+  border-left: 3px solid var(--color-primary);
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--text-primary);
+  word-break: break-word;
+}
+
+.step-preview-quote.success {
+  border-left-color: var(--color-success);
+  background: rgba(16, 185, 129, 0.03);
+}
+
+.step-preview-quote.error {
+  border-left-color: var(--color-error);
+  background: rgba(239, 68, 68, 0.03);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
+.badge-model {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--color-primary-light);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.badge-tool {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+

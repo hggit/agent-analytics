@@ -67,6 +67,7 @@ export default function App() {
   const [traces, setTraces] = useState<TraceSummary[]>([]);
   const [selectedTraceId, setSelectedTraceId] = useState<string | null>(null);
   const [selectedTraceEvents, setSelectedTraceEvents] = useState<TraceEvent[]>([]);
+  const [activeStepIndex, setActiveStepIndex] = useState<number | null>(null);
 
   // NL Query States
   const [nlInput, setNlInput] = useState('');
@@ -177,6 +178,7 @@ export default function App() {
 
   const handleTraceClick = async (traceId: string) => {
     setSelectedTraceId(traceId);
+    setActiveStepIndex(null);
     try {
       const res = await fetch(`/api/traces/${traceId}`);
       if (res.ok) {
@@ -640,53 +642,120 @@ export default function App() {
             <button className="timeline-close" onClick={() => setSelectedTraceId(null)}>×</button>
           </div>
           <div className="timeline-body">
-            <div className="timeline-steps">
-              {selectedTraceEvents.map((evt) => {
-                const metadataObj = evt.metadata ? JSON.parse(evt.metadata) : {};
-                let title = evt.eventType;
-                let details = '';
-                let dotClass = evt.status || 'success';
-
-                if (evt.eventType === 'trace_started') {
-                  title = `Trace Started: ${evt.agentName}`;
-                  details = `Prompt input: "${metadataObj.input}"`;
-                  dotClass = 'running';
-                } else if (evt.eventType === 'llm_call') {
-                  title = `LLM Call: ${evt.model}`;
-                  details = `Tokens: ${evt.inputTokens} in / ${evt.outputTokens} out\nCost: $${evt.costUsd?.toFixed(4)}\nLatency: ${evt.latencyMs}ms\n\nRoute: ${metadataObj.route || 'none'}`;
-                } else if (evt.eventType === 'tool_call') {
-                  title = `Tool Call: ${evt.toolName}`;
-                  details = `Status: ${evt.status}\nLatency: ${evt.latencyMs}ms`;
-                } else if (evt.eventType === 'error') {
-                  title = `Error: ${evt.errorType}`;
-                  details = `${metadataObj.message}\nTool: ${evt.toolName || 'none'}`;
-                  dotClass = 'failed';
-                } else if (evt.eventType === 'retry') {
-                  title = `Retry Tool: ${evt.toolName}`;
-                  details = `Attempt number: ${metadataObj.attempt}`;
-                } else if (evt.eventType === 'trace_completed') {
-                  title = `Trace Completed (${evt.status})`;
-                  details = `Final Output: "${metadataObj.output}"\nTotal Latency: ${(evt.latencyMs ? evt.latencyMs / 1000 : 0).toFixed(2)}s`;
+            {(() => {
+              const sortedEvents = [...selectedTraceEvents].sort((a, b) => a.stepIndex - b.stepIndex);
+              const startTime = sortedEvents.length > 0 ? new Date(sortedEvents[0].timestamp).getTime() : 0;
+              let runningCost = 0;
+              let runningTokens = 0;
+              let runningInputTokens = 0;
+              let runningOutputTokens = 0;
+              
+              const enrichedEvents: EnrichedTraceEvent[] = sortedEvents.map((evt) => {
+                if (evt.costUsd) {
+                  runningCost += evt.costUsd;
                 }
+                const tokens = (evt.inputTokens || 0) + (evt.outputTokens || 0);
+                runningTokens += tokens;
+                runningInputTokens += evt.inputTokens || 0;
+                runningOutputTokens += evt.outputTokens || 0;
 
-                return (
-                  <div key={evt.eventId} className="timeline-step-item">
-                    <div className={`timeline-step-dot ${dotClass}`} />
-                    <div className="timeline-step-card">
-                      <div className="step-header">
-                        <span className="step-type-badge">{evt.eventType}</span>
-                        <span>step {evt.stepIndex}</span>
-                      </div>
-                      <div className="step-title">{title}</div>
-                      <div className="step-metadata">{details}</div>
-                      <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '4px' }}>
-                        {new Date(evt.timestamp).toLocaleTimeString()}
-                      </div>
+                const elapsedMs = startTime ? new Date(evt.timestamp).getTime() - startTime : 0;
+                let throughput = 0;
+                if (evt.eventType === 'llm_call' && evt.latencyMs) {
+                  throughput = tokens / (evt.latencyMs / 1000);
+                }
+                return {
+                  ...evt,
+                  accumulatedCost: runningCost,
+                  elapsedMs,
+                  throughput,
+                  accumulatedTokens: runningTokens,
+                  accumulatedInputTokens: runningInputTokens,
+                  accumulatedOutputTokens: runningOutputTokens
+                };
+              });
+
+              // Trace overall statistics
+              const lastEvent = enrichedEvents[enrichedEvents.length - 1];
+              const totalDurationSec = startTime && lastEvent ? (new Date(lastEvent.timestamp).getTime() - startTime) / 1000 : 0;
+              const totalCost = runningCost;
+              const totalTokens = runningTokens;
+              const totalInputTokens = runningInputTokens;
+              const totalOutputTokens = runningOutputTokens;
+              
+              const llmCalls = enrichedEvents.filter(e => e.eventType === 'llm_call');
+              const toolCalls = enrichedEvents.filter(e => e.eventType === 'tool_call');
+              const errorCount = enrichedEvents.filter(e => e.eventType === 'error').length;
+              const retryCount = enrichedEvents.filter(e => e.eventType === 'retry').length;
+              
+              const avgLlmLatencyMs = llmCalls.length > 0 
+                ? llmCalls.reduce((sum, e) => sum + (e.latencyMs || 0), 0) / llmCalls.length 
+                : 0;
+              const avgLlmThroughput = llmCalls.length > 0
+                ? llmCalls.reduce((sum, e) => sum + (e.throughput || 0), 0) / llmCalls.length
+                : 0;
+
+              return (
+                <>
+                  {/* Trace Summary Card */}
+                  <div className="trace-summary-card">
+                    <div className="trace-summary-metric">
+                      <span className="trace-summary-label">Total Duration</span>
+                      <span className="trace-summary-value">{totalDurationSec.toFixed(2)}s</span>
+                      <span className="trace-summary-subvalue">Start-to-end time</span>
                     </div>
+                    <div className="trace-summary-metric">
+                      <span className="trace-summary-label">Total Cost</span>
+                      <span className="trace-summary-value" style={{ color: 'var(--color-success)' }}>${totalCost.toFixed(4)}</span>
+                      <span className="trace-summary-subvalue">Cumulative USD</span>
+                    </div>
+                    <div className="trace-summary-metric">
+                      <span className="trace-summary-label">Token Usage</span>
+                      <span className="trace-summary-value">{totalTokens.toLocaleString()} t</span>
+                      <span className="trace-summary-subvalue">{totalInputTokens.toLocaleString()} in / {totalOutputTokens.toLocaleString()} out</span>
+                    </div>
+                    <div className="trace-summary-metric">
+                      <span className="trace-summary-label">Execution Steps</span>
+                      <span className="trace-summary-value">{enrichedEvents.length} steps</span>
+                      <span className="trace-summary-subvalue">
+                        {llmCalls.length} LLM | {toolCalls.length} Tool {errorCount > 0 ? `| ${errorCount} Err` : ''} {retryCount > 0 ? `| ${retryCount} Ret` : ''}
+                      </span>
+                    </div>
+                    {llmCalls.length > 0 && (
+                      <div className="trace-summary-metric">
+                        <span className="trace-summary-label">LLM Avg Speed</span>
+                        <span className="trace-summary-value">{avgLlmThroughput.toFixed(1)} t/s</span>
+                        <span className="trace-summary-subvalue">{(avgLlmLatencyMs / 1000).toFixed(2)}s avg latency</span>
+                      </div>
+                    )}
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* Horizontal Workflow DAG View */}
+                  <SVGWorkflowDAG
+                    events={enrichedEvents}
+                    activeStepIndex={activeStepIndex}
+                    onStepClick={(stepIndex) => {
+                      setActiveStepIndex(stepIndex);
+                      document.getElementById(`step-${stepIndex}`)?.scrollIntoView({
+                        behavior: 'smooth',
+                        block: 'nearest'
+                      });
+                    }}
+                  />
+
+                  <div className="timeline-steps">
+                    {enrichedEvents.map((evt) => (
+                      <TraceStepCard
+                        key={evt.eventId}
+                        evt={evt}
+                        isActive={activeStepIndex === evt.stepIndex}
+                        onCardClick={() => setActiveStepIndex(evt.stepIndex)}
+                      />
+                    ))}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -747,6 +816,8 @@ function SVGChart({ data }: { data: any[] }) {
 
 // 1. Line/Area Chart component using raw SVG
 function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string; valKey: string }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
   const width = 800;
   const height = 240;
   const paddingLeft = 60;
@@ -781,7 +852,7 @@ function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string;
       <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} style={{ overflow: 'visible' }}>
         <defs>
           <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.3" />
+            <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.35" />
             <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0.0" />
           </linearGradient>
         </defs>
@@ -821,6 +892,53 @@ function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string;
         {points.map((p, i) => (
           <circle key={i} cx={getX(i)} cy={getY(p.val)} r="4" fill="var(--bg-main)" stroke="var(--color-primary-light)" strokeWidth="2" />
         ))}
+
+        {/* Hover elements */}
+        {hoveredIdx !== null && (
+          <g>
+            <line
+              x1={getX(hoveredIdx)}
+              y1={paddingTop}
+              x2={getX(hoveredIdx)}
+              y2={paddingTop + plotHeight}
+              className="chart-hover-line"
+            />
+            <circle
+              cx={getX(hoveredIdx)}
+              cy={getY(points[hoveredIdx].val)}
+              r="6"
+              fill="var(--color-primary)"
+              className="chart-hover-dot"
+            />
+            <g transform={`translate(${getX(hoveredIdx) + (hoveredIdx > points.length / 2 ? -130 : 10)}, ${getY(points[hoveredIdx].val) - 20})`} style={{ pointerEvents: 'none' }}>
+              <rect x="0" y="0" width="120" height="42" rx="6" className="chart-tooltip-bg" />
+              <text x="10" y="18" fill="var(--text-secondary)" fontSize="9" fontWeight="500">
+                {points[hoveredIdx].xLabel}
+              </text>
+              <text x="10" y="32" fill="var(--text-primary)" fontSize="11" fontWeight="700">
+                {points[hoveredIdx].val >= 1000 ? points[hoveredIdx].val.toLocaleString() : points[hoveredIdx].val.toFixed(2)}
+              </text>
+            </g>
+          </g>
+        )}
+
+        {/* Slice triggers for hover detection */}
+        {points.map((_, i) => {
+          const sliceWidth = plotWidth / (points.length || 1);
+          const x = getX(i) - sliceWidth / 2;
+          return (
+            <rect
+              key={i}
+              x={x}
+              y={paddingTop}
+              width={sliceWidth}
+              height={plotHeight}
+              className="chart-slice-trigger"
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+            />
+          );
+        })}
       </svg>
     </div>
   );
@@ -828,6 +946,8 @@ function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string;
 
 // 2. Bar Chart component using raw SVG
 function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; valKey: string }) {
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
+
   const width = 800;
   const height = 240;
   const paddingLeft = 80;
@@ -870,9 +990,15 @@ function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; va
           const x = paddingLeft + i * (barWidth + gap);
           const barHeight = (item.val / maxVal) * plotHeight;
           const y = paddingTop + plotHeight - barHeight;
+          const isHovered = hoveredIdx === i;
 
           return (
-            <g key={i}>
+            <g
+              key={i}
+              onMouseEnter={() => setHoveredIdx(i)}
+              onMouseLeave={() => setHoveredIdx(null)}
+              style={{ cursor: 'pointer' }}
+            >
               {/* Bar rectangle */}
               <rect
                 x={x}
@@ -880,12 +1006,23 @@ function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; va
                 width={barWidth}
                 height={barHeight}
                 rx="4"
-                fill="linear-gradient(180deg, var(--color-primary-light), var(--color-accent))"
-                style={{ fill: 'var(--color-primary)' }}
+                style={{
+                  fill: isHovered ? 'var(--color-primary-light)' : 'var(--color-primary)',
+                  opacity: hoveredIdx !== null && !isHovered ? 0.5 : 1,
+                  transition: 'all 0.15s ease'
+                }}
               />
 
-              {/* Bar value label */}
-              <text x={x + barWidth / 2} y={y - 6} fill="var(--text-primary)" fontSize="10" fontWeight="600" textAnchor="middle">
+              {/* Bar value label (always visible, highlight on hover) */}
+              <text
+                x={x + barWidth / 2}
+                y={y - 6}
+                fill={isHovered ? 'var(--color-primary-light)' : 'var(--text-primary)'}
+                fontSize="10"
+                fontWeight="600"
+                textAnchor="middle"
+                style={{ transition: 'fill 0.15s ease' }}
+              >
                 {item.val >= 1000 ? `${(item.val / 1000).toFixed(1)}k` : item.val.toFixed(2)}
               </text>
 
@@ -893,10 +1030,394 @@ function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; va
               <text x={x + barWidth / 2} y={height - 15} fill="var(--text-secondary)" fontSize="10" textAnchor="middle">
                 {item.label.length > 12 ? `${item.label.substring(0, 10)}...` : item.label}
               </text>
+
+              {/* Hover Tooltip overlay */}
+              {isHovered && (
+                <g transform={`translate(${x + barWidth / 2 - 60}, ${y - 38})`} style={{ pointerEvents: 'none' }}>
+                  <rect x="0" y="0" width="120" height="28" rx="4" className="chart-tooltip-bg" />
+                  <text x="60" y="17" fill="var(--text-primary)" fontSize="9" fontWeight="700" textAnchor="middle">
+                    {item.val.toLocaleString(undefined, { maximumFractionDigits: 4 })}
+                  </text>
+                </g>
+              )}
             </g>
           );
         })}
       </svg>
+    </div>
+  );
+}
+
+// 3. Temporal-style Workflow DAG Execution Path
+interface EnrichedTraceEvent extends TraceEvent {
+  accumulatedCost: number;
+  elapsedMs: number;
+  throughput: number;
+  accumulatedTokens: number;
+  accumulatedInputTokens: number;
+  accumulatedOutputTokens: number;
+}
+
+interface SVGWorkflowDAGProps {
+  events: EnrichedTraceEvent[];
+  activeStepIndex: number | null;
+  onStepClick: (stepIndex: number) => void;
+}
+
+function SVGWorkflowDAG({ events, activeStepIndex, onStepClick }: SVGWorkflowDAGProps) {
+  if (!events || events.length === 0) return null;
+
+  return (
+    <div className="workflow-dag-section">
+      <h4 className="sidebar-section-title" style={{ marginTop: 0, marginBottom: '6px' }}>⚡ Execution Workflow Path</h4>
+      <div className="dag-scroll-container">
+        {events.map((evt, idx) => {
+          const isSelected = activeStepIndex === evt.stepIndex;
+          let nodeClass = '';
+          let icon = '⚙️';
+          let title = evt.eventType;
+          let meta = `step ${evt.stepIndex}`;
+          
+          const metadataObj = evt.metadata ? JSON.parse(evt.metadata) : {};
+
+          if (evt.eventType === 'trace_started') {
+            nodeClass = 'start';
+            icon = '▶️';
+            title = 'Start';
+            meta = evt.agentName;
+          } else if (evt.eventType === 'trace_completed') {
+            nodeClass = evt.status === 'success' ? 'end-success' : 'end-failed';
+            icon = evt.status === 'success' ? '🏁' : '❌';
+            title = evt.status === 'success' ? 'Completed' : 'Failed';
+            
+            const elapsedStr = `+${(evt.elapsedMs / 1000).toFixed(1)}s`;
+            const tokenStr = evt.accumulatedTokens ? `${evt.accumulatedTokens}t` : '';
+            const costStr = `$${evt.accumulatedCost.toFixed(4)}`;
+            meta = `${elapsedStr} | ${tokenStr} | ${costStr}`;
+          } else if (evt.eventType === 'llm_call') {
+            nodeClass = 'llm';
+            icon = '🤖';
+            title = evt.model || 'LLM';
+            
+            const totalTokens = (evt.inputTokens || 0) + (evt.outputTokens || 0);
+            const tokenStr = totalTokens > 0 ? `${totalTokens}t` : '';
+            const costStr = evt.costUsd ? `$${evt.costUsd.toFixed(4)}` : '';
+            const throughputStr = evt.throughput > 0 ? `${evt.throughput.toFixed(0)}t/s` : '';
+            const parts = [`+${(evt.latencyMs ? evt.latencyMs / 1000 : 0).toFixed(1)}s`];
+            if (tokenStr) parts.push(tokenStr);
+            if (throughputStr) parts.push(throughputStr);
+            if (costStr) parts.push(costStr);
+            meta = parts.join(' | ');
+          } else if (evt.eventType === 'tool_call') {
+            nodeClass = 'tool';
+            icon = '🛠️';
+            title = evt.toolName || 'Tool';
+            
+            const latencyStr = `+${(evt.latencyMs ? evt.latencyMs / 1000 : 0).toFixed(1)}s`;
+            const statusStr = evt.status || 'success';
+            const costStr = evt.costUsd ? ` | $${evt.costUsd.toFixed(4)}` : '';
+            meta = `${latencyStr} | ${statusStr}${costStr}`;
+          } else if (evt.eventType === 'error') {
+            nodeClass = 'error';
+            icon = '⚠️';
+            title = evt.errorType || 'Error';
+            
+            const errMsg = metadataObj.message || '';
+            const errSnippet = errMsg.length > 12 ? `${errMsg.substring(0, 10)}...` : errMsg;
+            meta = `+${(evt.elapsedMs / 1000).toFixed(1)}s${errSnippet ? ` | ${errSnippet}` : ''}`;
+          } else if (evt.eventType === 'retry') {
+            nodeClass = 'retry';
+            icon = '🔄';
+            title = `Retry ${evt.toolName || ''}`;
+            
+            const attempt = metadataObj.attempt ? `#${metadataObj.attempt}` : '';
+            meta = `Retrying${attempt ? ` ${attempt}` : ''}`;
+          }
+
+          return (
+            <React.Fragment key={evt.eventId}>
+              <div
+                className={`dag-node ${nodeClass} ${isSelected ? 'active' : ''}`}
+                onClick={() => onStepClick(evt.stepIndex)}
+              >
+                <div className="dag-node-header">
+                  <span>{icon}</span>
+                  <span>{evt.eventType.replace('_', ' ')}</span>
+                </div>
+                <div className="dag-node-title" title={title}>{title}</div>
+                <div className="dag-node-meta" title={meta}>{meta}</div>
+              </div>
+              {idx < events.length - 1 && (
+                <div className="dag-connector">➔</div>
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// 4. Detailed Timeline Step Card (with Summary vs JSON tabs)
+interface TraceStepCardProps {
+  evt: EnrichedTraceEvent;
+  isActive: boolean;
+  onCardClick: () => void;
+}
+
+function TraceStepCard({ evt, isActive, onCardClick }: TraceStepCardProps) {
+  const [activeTab, setActiveTab] = useState<'summary' | 'payload'>('summary');
+  const metadataObj = evt.metadata ? JSON.parse(evt.metadata) : {};
+  let dotClass = evt.status || 'success';
+
+  if (evt.eventType === 'trace_started') {
+    dotClass = 'running';
+  } else if (evt.eventType === 'error') {
+    dotClass = 'failed';
+  }
+
+  return (
+    <div
+      id={`step-${evt.stepIndex}`}
+      className={`timeline-step-item`}
+      onClick={onCardClick}
+    >
+      <div className={`timeline-step-dot ${dotClass}`} />
+      <div className={`timeline-step-card ${isActive ? 'active-highlight' : ''}`}>
+        <div className="step-header">
+          <span className="step-type-badge">{evt.eventType}</span>
+          <span>step {evt.stepIndex}</span>
+        </div>
+
+        <div className="step-tabs-container">
+          <button
+            className={`step-tab-btn ${activeTab === 'summary' ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab('summary');
+            }}
+          >
+            Summary
+          </button>
+          <button
+            className={`step-tab-btn ${activeTab === 'payload' ? 'active' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setActiveTab('payload');
+            }}
+          >
+            Payload (JSON)
+          </button>
+        </div>
+
+        {activeTab === 'summary' ? (
+          <>
+            {evt.eventType === 'trace_started' && (
+              <>
+                <div className="step-title" style={{ fontSize: '15px', fontWeight: '600' }}>
+                  🏁 Trace Started: <span style={{ color: 'var(--color-primary-light)' }}>{evt.agentName}</span>
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">User ID</span>
+                    <span className="step-metric-value">{evt.userId || 'anonymous'}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Timestamp</span>
+                    <span className="step-metric-value">{new Date(evt.timestamp).toLocaleTimeString()}</span>
+                  </div>
+                </div>
+                {metadataObj.input && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Initial Prompt Input</span>
+                    <div className="step-preview-quote">
+                      "{metadataObj.input}"
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {evt.eventType === 'llm_call' && (
+              <>
+                <div className="step-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', fontWeight: '600' }}>
+                  🤖 LLM Call: <span className="badge-model">{evt.model}</span>
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Latency</span>
+                    <span className="step-metric-value">{evt.latencyMs ? `${evt.latencyMs}ms` : '0ms'}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Throughput</span>
+                    <span className="step-metric-value">{evt.throughput > 0 ? `${evt.throughput.toFixed(1)} t/s` : 'N/A'}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Tokens (Input / Output)</span>
+                    <span className="step-metric-value">
+                      {evt.inputTokens || 0} / {evt.outputTokens || 0} <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>({(evt.inputTokens || 0) + (evt.outputTokens || 0)} total)</span>
+                    </span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Cost / Acc. Cost</span>
+                    <span className="step-metric-value" style={{ color: 'var(--color-success)' }}>
+                      ${evt.costUsd?.toFixed(4) || '0.0000'} <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>(${evt.accumulatedCost.toFixed(4)})</span>
+                    </span>
+                  </div>
+                </div>
+                {metadataObj.route && (
+                  <div style={{ fontSize: '12px', marginTop: '6px', color: 'var(--text-secondary)' }}>
+                    🎯 Decision Route: <strong style={{ color: 'var(--color-primary-light)' }}>{metadataObj.route}</strong>
+                  </div>
+                )}
+                {metadataObj.prompt && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Prompt Preview</span>
+                    <div className="step-preview-quote" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                      {metadataObj.prompt.length > 200 ? `${metadataObj.prompt.substring(0, 200)}...` : metadataObj.prompt}
+                    </div>
+                  </div>
+                )}
+                {metadataObj.response && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Response Preview</span>
+                    <div className="step-preview-quote success" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                      {metadataObj.response.length > 200 ? `${metadataObj.response.substring(0, 200)}...` : metadataObj.response}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {evt.eventType === 'tool_call' && (
+              <>
+                <div className="step-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', fontWeight: '600' }}>
+                  🛠️ Tool Call: <span className="badge-tool">{evt.toolName}</span>
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Status</span>
+                    <span className={`step-metric-value ${evt.status === 'success' ? 'status-success' : 'status-failed'}`} style={{ background: 'transparent', padding: 0 }}>
+                      {evt.status}
+                    </span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Execution Latency</span>
+                    <span className="step-metric-value">{evt.latencyMs ? `${evt.latencyMs}ms` : '0ms'}</span>
+                  </div>
+                </div>
+                {Object.entries(metadataObj).filter(([k]) => k !== 'tags').map(([k, v]) => (
+                  <div className="step-preview-container" key={k}>
+                    <span className="step-preview-title">{k}</span>
+                    <div className="step-preview-quote" style={{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>
+                      {typeof v === 'object' ? JSON.stringify(v, null, 2) : String(v)}
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+
+            {evt.eventType === 'error' && (
+              <>
+                <div className="step-title" style={{ fontSize: '15px', fontWeight: '600', color: 'var(--color-error)' }}>
+                  ⚠️ Error Encountered: {evt.errorType}
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Target Tool</span>
+                    <span className="step-metric-value">{evt.toolName || 'none'}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Timeline Offset</span>
+                    <span className="step-metric-value">+{(evt.elapsedMs / 1000).toFixed(2)}s</span>
+                  </div>
+                </div>
+                {metadataObj.message && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Error Message</span>
+                    <div className="step-preview-quote error">
+                      {metadataObj.message}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {evt.eventType === 'retry' && (
+              <>
+                <div className="step-title" style={{ fontSize: '15px', fontWeight: '600', color: 'var(--color-warning)' }}>
+                  🔄 Retrying Tool Execution: {evt.toolName}
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Attempt Number</span>
+                    <span className="step-metric-value">#{metadataObj.attempt || 1}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Timeline Offset</span>
+                    <span className="step-metric-value">+{(evt.elapsedMs / 1000).toFixed(2)}s</span>
+                  </div>
+                </div>
+                {metadataObj.error && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Retrying due to error</span>
+                    <div className="step-preview-quote error">
+                      {metadataObj.error}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {evt.eventType === 'trace_completed' && (
+              <>
+                <div className="step-title" style={{ fontSize: '15px', fontWeight: '600', color: evt.status === 'success' ? 'var(--color-success)' : 'var(--color-error)' }}>
+                  🏁 Trace Finished ({evt.status})
+                </div>
+                <div className="step-summary-grid">
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Total Duration</span>
+                    <span className="step-metric-value">{(evt.latencyMs ? evt.latencyMs / 1000 : 0).toFixed(2)}s</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Final Accumulated Cost</span>
+                    <span className="step-metric-value" style={{ color: 'var(--color-success)' }}>${evt.accumulatedCost.toFixed(4)}</span>
+                  </div>
+                  <div className="step-summary-metric">
+                    <span className="step-metric-label">Cumulative Tokens</span>
+                    <span className="step-metric-value">
+                      {evt.accumulatedTokens} <span style={{ color: 'var(--text-muted)', fontSize: '10px' }}>({evt.accumulatedInputTokens} in / {evt.accumulatedOutputTokens} out)</span>
+                    </span>
+                  </div>
+                </div>
+                {metadataObj.output && (
+                  <div className="step-preview-container">
+                    <span className="step-preview-title">Final Agent Output</span>
+                    <div className="step-preview-quote success">
+                      "{metadataObj.output}"
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Rich Analytics Metrics Strip (Secondary helper metrics) */}
+            <div className="step-metrics-strip" style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', fontSize: '11px', color: 'var(--text-secondary)', marginTop: '14px', background: 'rgba(0,0,0,0.15)', padding: '8px 12px', borderRadius: '6px', border: '1px solid rgba(255,255,255,0.02)' }}>
+              <span>⏱️ Elapsed: <strong>+{(evt.elapsedMs / 1000).toFixed(2)}s</strong></span>
+              <span>💳 Total Cost: <strong>${evt.accumulatedCost.toFixed(4)}</strong></span>
+              <span>⚡ Acc. Tokens: <strong>{evt.accumulatedTokens.toLocaleString()}</strong></span>
+            </div>
+          </>
+        ) : (
+          <pre className="json-payload-pre">
+            {JSON.stringify(metadataObj, null, 2)}
+          </pre>
+        )}
+
+        <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
+          {new Date(evt.timestamp).toLocaleTimeString()}
+        </div>
+      </div>
     </div>
   );
 }

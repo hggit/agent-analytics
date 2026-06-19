@@ -121,7 +121,6 @@ We migrated the backend architecture from DuckDB to a highly scalable ClickHouse
 ## 7. Updated Test Verification Output
 The unit test suite runs completely mock-integrated and passes successfully:
 ```bash
-56:    npm install
 🧪 Starting Agent Trace Analytics Engine Tests...
   └─ Running Test 1: SDK Batching...
   ✅ Test 1 Passed: SDK batched and flushed correctly.
@@ -163,3 +162,43 @@ We successfully verified the entire stack locally using Docker Compose, Redpanda
       }
     }
     ```
+```
+
+---
+
+## 9. Interactive Visualizations & Temporal-Style Workflow DAG
+We successfully upgraded the React frontend dashboard with rich, interactive visualizations and a Temporal-style trace execution graph:
+* **Interactive SVG Charts & Hover Tooltips:**
+  - Implemented pixel-perfect vertical slice hover zones on charts. Hovering over a chart dynamically displays a vertical guideline, highlights the active data point, and shows a custom tooltip displaying the exact count/value and timestamp.
+  - Upgraded `SVGLineChart` with a soft primary color gradient under the curve.
+* **Temporal-Style Workflow DAG (`SVGWorkflowDAG`):**
+  - Created a horizontal, scrollable execution node graph representing the trace lifecycle.
+  - Nodes represent trace steps (Start, LLM Calls, Tool Calls, Errors, Retries, End) and are color-coded based on their event types and completion statuses.
+  - Connected the nodes with animated sequence flow arrows.
+  - Clicking a node in the DAG automatically highlights and scrolls the timeline drawer directly to that step's details card.
+* **Structured Payload JSON Inspector:**
+  - Integrated tabbed navigation (Summary vs Payload) inside each timeline step details card.
+  - The **Payload Tab** parses and pretty-prints the event's raw metadata JSON with structured indentation and JetBrains Mono monospace font, facilitating rapid debugging of parameters and intermediate agent thoughts.
+
+---
+
+## 10. Widened Trace Details & Advanced Analytics Metrics (Phase 2)
+We have successfully expanded the analytics detail panel and introduced advanced analytics metrics across the trace visualization elements:
+* **Widened Trace Details Panel:**
+  - Increased `.timeline-panel` width in `index.css` to `min(1100px, 90vw)`. This maximizes viewport layout utilization on widescreen monitors and dramatically improves readability of the workflow path DAG.
+* **Overall Trace Summary Card:**
+  - Introduced an execution summary card at the top of the Trace Details panel. It precalculates and displays:
+    - **Total Duration:** Entire elapsed start-to-end execution runtime.
+    - **Total Cost:** Final accumulated USD cost of all LLM and tool actions.
+    - **Token Usage:** Aggregated token consumption (input vs output tokens).
+    - **Execution Steps:** Step distribution counts (LLM calls, Tool calls, Errors, Retries).
+    - **LLM Performance:** Average token speed (t/s) and latency per LLM inference.
+* **Advanced DAG Node Metadata:**
+  - Enriched text sub-labels inside individual DAG nodes to display exact latency, cost, tokens, and throughput on the node itself:
+    - **LLM Node:** Displays model name and `+Latency | Tokens | Speed | Cost` (e.g. `+1.2s | 750t | 625t/s | $0.0053`).
+    - **Tool Node:** Displays tool name, latency, status, and cost if any.
+    - **Error/Retry Nodes:** Displays error messages and retry attempt numbers.
+    - **Completed Node:** Summarizes total elapsed time, tokens, and final cost.
+* **Redesigned Step Card Summary Tab:**
+  - Replaced unstructured plain-text lists with structured summary grids containing latency, token allocations, individual costs, and overall accumulated totals.
+  - Parses and displays formatted quote sections for input prompts, outputs, decision routes, parameters, error messages, and retry causes directly in the Summary view, eliminating the need to toggle the raw JSON Payload tab for basic inspection.
