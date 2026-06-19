@@ -39,7 +39,7 @@ interface TraceEvent {
   outputTokens?: number;
   costUsd?: number;
   errorType?: string;
-  metadata: string; // DuckDB stores JSON as VARCHAR string
+  metadata: string; // ClickHouse stores JSON as String
 }
 
 // Preset natural language query insights
@@ -488,11 +488,11 @@ export default function App() {
         <header className="main-header">
           <div className="main-title-container">
             <h1 className="main-title">OLAP Dashboard</h1>
-            <p className="main-subtitle">Durable analytics engine powered by DuckDB & columnar event storage</p>
+            <p className="main-subtitle">Durable analytics engine powered by ClickHouse & columnar event storage</p>
           </div>
           <div>
             <span className="status-badge status-success">
-              ● Connected to db.duckdb
+              ● Connected to ClickHouse & Redpanda
             </span>
           </div>
         </header>
@@ -679,7 +679,7 @@ export default function App() {
                     <span>Executed SQL Statement</span>
                   </div>
                   <span className="visualizer-latency">
-                    DuckDB compiled & scanned in <strong>{queryLatencyMs}ms</strong> {queryLatencyMs !== null && queryLatencyMs < 15 ? '🚀' : ''}
+                    ClickHouse compiled & scanned in <strong>{queryLatencyMs}ms</strong> {queryLatencyMs !== null && queryLatencyMs < 15 ? '🚀' : ''}
                   </span>
                 </div>
                 {isSqlExpanded && (
