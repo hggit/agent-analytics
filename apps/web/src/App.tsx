@@ -667,26 +667,7 @@ export default function App() {
             </div>
 
             <div className="chart-canvas">
-              <SVGChart data={activeChartData} onPointClick={(clickEvent) => {
-                if (clickEvent.type === 'category') {
-                  const label = clickEvent.category;
-                  if (availableAgents.includes(label)) {
-                    setAgentFilter(label);
-                  } else if (availableModels.includes(label)) {
-                    setModelFilter(label);
-                  } else if (availableTools.includes(label)) {
-                    setToolFilter(label);
-                  } else if (label === 'success' || label === 'failed' || label === 'running') {
-                    setStatusFilter(label);
-                  }
-                } else if (clickEvent.type === 'time') {
-                  setTimelineFilter({
-                    startTime: clickEvent.startTime,
-                    endTime: clickEvent.endTime,
-                    label: clickEvent.label
-                  });
-                }
-              }} />
+              <SVGChart data={activeChartData} />
             </div>
 
             {/* Collapsible SQL Visualizer */}
@@ -903,7 +884,7 @@ export default function App() {
 }
 
 // Adaptive SVG Chart component to render queries dynamically
-function SVGChart({ data, onPointClick }: { data: any[]; onPointClick: (clickEvent: any) => void }) {
+function SVGChart({ data }: { data: any[] }) {
   if (!data || data.length === 0) {
     return (
       <div style={{ display: 'flex', height: '100%', width: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
@@ -921,7 +902,7 @@ function SVGChart({ data, onPointClick }: { data: any[]; onPointClick: (clickEve
   const valueKeys = keys.filter(k => k !== timeKey && typeof data[0][k] === 'number');
 
   if (timeKey && valueKeys.length > 0) {
-    return <SVGLineChart data={data} timeKey={timeKey} valKey={valueKeys[0]} onPointClick={onPointClick} />;
+    return <SVGLineChart data={data} timeKey={timeKey} valKey={valueKeys[0]} />;
   }
 
   // Otherwise draw a Bar Chart
@@ -929,7 +910,7 @@ function SVGChart({ data, onPointClick }: { data: any[]; onPointClick: (clickEve
   const numKey = keys.find(k => typeof data[0][k] === 'number');
 
   if (catKey && numKey) {
-    return <SVGBarChart data={data} catKey={catKey} valKey={numKey} onPointClick={onPointClick} />;
+    return <SVGBarChart data={data} catKey={catKey} valKey={numKey} />;
   }
 
   // Fallback to simple table view
@@ -954,7 +935,7 @@ function SVGChart({ data, onPointClick }: { data: any[]; onPointClick: (clickEve
 }
 
 // 1. Line/Area Chart component using raw SVG
-function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; timeKey: string; valKey: string; onPointClick: (clickEvent: any) => void }) {
+function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string; valKey: string }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const width = 800;
@@ -1082,19 +1063,6 @@ function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; ti
               className="chart-slice-trigger"
               onMouseEnter={() => setHoveredIdx(i)}
               onMouseLeave={() => setHoveredIdx(null)}
-              onClick={() => {
-                const item = data[i];
-                const date = parseSafeDate(item[timeKey]);
-                if (!date) return;
-                const startTime = date.toISOString();
-                const endTime = new Date(date.getTime() + 60 * 60 * 1000).toISOString();
-                onPointClick({
-                  type: 'time',
-                  startTime,
-                  endTime,
-                  label: date.toLocaleString()
-                });
-              }}
             />
           );
         })}
@@ -1104,7 +1072,7 @@ function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; ti
 }
 
 // 2. Bar Chart component using raw SVG
-function SVGBarChart({ data, catKey, valKey, onPointClick }: { data: any[]; catKey: string; valKey: string; onPointClick: (clickEvent: any) => void }) {
+function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; valKey: string }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const width = 800;
@@ -1156,14 +1124,6 @@ function SVGBarChart({ data, catKey, valKey, onPointClick }: { data: any[]; catK
               key={i}
               onMouseEnter={() => setHoveredIdx(i)}
               onMouseLeave={() => setHoveredIdx(null)}
-              style={{ cursor: 'pointer' }}
-              onClick={() => {
-                onPointClick({
-                  type: 'category',
-                  category: item.label,
-                  value: item.val
-                });
-              }}
             >
               {/* Bar rectangle */}
               <rect
