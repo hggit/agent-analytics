@@ -7,10 +7,12 @@
     "start": "ts-node src/index.ts"
   },
   "dependencies": {
+    "@clickhouse/client": "^1.21.0",
     "@google/generative-ai": "^0.21.0",
     "cors": "^2.8.5",
     "duckdb": "^1.2.0",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "kafkajs": "^2.2.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

@@ -190,6 +190,9 @@ async function runTests() {
   assert.strictEqual(captureRes.status, 'success');
   assert.strictEqual(captureRes.inserted, allEvents.length);
 
+  // Wait for the mock Kafka consumer to write the batch to the mock database
+  await new Promise(resolve => setImmediate(resolve));
+
   // Call listTracesHandler
   let tracesRes: any;
   const mockListReq = { query: {} } as any;

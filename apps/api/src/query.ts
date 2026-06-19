@@ -30,7 +30,6 @@ export function validateSQL(sql: string): { valid: boolean; reason?: string } {
   ];
 
   for (const kw of forbiddenKeywords) {
-    // Match word boundaries to avoid false positives (e.g. "model" contains "del" but is fine)
     const regex = new RegExp(`\\b${kw}\\b`, 'i');
     if (regex.test(sql)) {
       return { valid: false, reason: `Query contains forbidden keyword: ${kw}` };
@@ -41,30 +40,30 @@ export function validateSQL(sql: string): { valid: boolean; reason?: string } {
 }
 
 // Helper function to build traceId-level filters to avoid event-level null matching issues
-export function buildTraceIdFilters(filters: any, tableAlias?: string): { clauses: string[]; params: any[] } {
+export function buildTraceIdFilters(filters: any, tableAlias?: string): { clauses: string[]; params: Record<string, any> } {
   const clauses: string[] = [];
-  const params: any[] = [];
+  const params: Record<string, any> = {};
   const prefix = tableAlias ? `${tableAlias}.` : '';
 
   if (filters.agentName) {
-    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE agentName = ?)`);
-    params.push(filters.agentName);
+    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE agentName = {agentNameFilter: String})`);
+    params.agentNameFilter = filters.agentName;
   }
   if (filters.status) {
     if (filters.status === 'running') {
       clauses.push(`${prefix}traceId NOT IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_completed')`);
     } else {
-      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_completed' AND status = ?)`);
-      params.push(filters.status);
+      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_completed' AND status = {statusFilter: String})`);
+      params.statusFilter = filters.status;
     }
   }
   if (filters.model) {
-    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'llm_call' AND model = ?)`);
-    params.push(filters.model);
+    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'llm_call' AND model = {modelFilter: String})`);
+    params.modelFilter = filters.model;
   }
   if (filters.toolName) {
-    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'tool_call' AND toolName = ?)`);
-    params.push(filters.toolName);
+    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'tool_call' AND toolName = {toolNameFilter: String})`);
+    params.toolNameFilter = filters.toolName;
   }
   if (filters.timeRange) {
     const now = new Date();
@@ -78,8 +77,8 @@ export function buildTraceIdFilters(filters: any, tableAlias?: string): { clause
     }
 
     if (minTime) {
-      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_started' AND timestamp >= ?)`);
-      params.push(minTime.toISOString());
+      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_started' AND timestamp >= {timeRangeFilter: DateTime64(3)})`);
+      params.timeRangeFilter = minTime.toISOString();
     }
   }
 
@@ -97,7 +96,7 @@ function parseDeterministic(nlQuery: string): string | null {
     q.includes('model') &&
     (q.includes('time') || q.includes('hour') || q.includes('day'))
   ) {
-    return `SELECT model, date_trunc('hour', timestamp) AS hour, AVG(latencyMs) AS avg_latency FROM events WHERE eventType = 'llm_call' AND model IS NOT NULL GROUP BY model, hour ORDER BY hour ASC;`;
+    return `SELECT model, toStartOfHour(timestamp) AS hour, AVG(latencyMs) AS avg_latency FROM events WHERE eventType = 'llm_call' AND model IS NOT NULL GROUP BY model, hour ORDER BY hour ASC;`;
   }
 
   // Query 2: Which tools fail the most
@@ -127,12 +126,12 @@ function parseDeterministic(nlQuery: string): string | null {
 
   // Query 7: Number of runs per hour
   if (q.includes('runs') && q.includes('hour')) {
-    return `SELECT date_trunc('hour', timestamp) AS hour, COUNT(*) AS run_count FROM events WHERE eventType = 'trace_started' GROUP BY hour ORDER BY hour ASC;`;
+    return `SELECT toStartOfHour(timestamp) AS hour, COUNT(*) AS run_count FROM events WHERE eventType = 'trace_started' GROUP BY hour ORDER BY hour ASC;`;
   }
 
   // Query 8: Average steps per run by outcome
   if ((q.includes('steps') || q.includes('step index')) && q.includes('run') && q.includes('outcome')) {
-    return `SELECT status AS outcome, AVG(steps) AS avg_steps FROM (SELECT traceId, COUNT(*) AS steps, (SELECT status FROM events e2 WHERE e2.traceId = events.traceId AND e2.eventType = 'trace_completed' LIMIT 1) AS status FROM events GROUP BY traceId) WHERE status IS NOT NULL GROUP BY outcome;`;
+    return `SELECT outcome, AVG(steps) AS avg_steps FROM (SELECT traceId, COUNT(*) AS steps FROM events GROUP BY traceId) AS t INNER JOIN (SELECT traceId, status AS outcome FROM events WHERE eventType = 'trace_completed') AS c ON t.traceId = c.traceId GROUP BY outcome;`;
   }
 
   return null;
@@ -148,33 +147,34 @@ async function translateWithGemini(nlQuery: string): Promise<string> {
   const ai = new GoogleGenerativeAI(geminiApiKey);
   const model = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-  const systemPrompt = `You are a DuckDB SQL expert translating natural language requests into read-only SQL SELECT queries.
+  const systemPrompt = `You are a ClickHouse SQL expert translating natural language requests into read-only SQL SELECT queries.
 The table name is "events".
 Here is the schema of the "events" table:
-- eventId (VARCHAR, Primary Key)
-- traceId (VARCHAR)
-- runId (VARCHAR)
-- timestamp (TIMESTAMP)
-- agentName (VARCHAR)
-- userId (VARCHAR)
-- eventType (VARCHAR) - Can be 'trace_started', 'llm_call', 'tool_call', 'error', 'retry', 'trace_completed'
-- stepIndex (INTEGER)
-- status (VARCHAR) - Can be 'success', 'failed', 'running'
-- latencyMs (INTEGER, nullable) - Latency of LLM call, tool call, or full trace
-- model (VARCHAR, nullable) - LLM model name (e.g. 'gpt-5.2')
-- toolName (VARCHAR, nullable) - Tool name (e.g. 'web_search')
-- inputTokens (INTEGER, nullable) - Input tokens for LLM call
-- outputTokens (INTEGER, nullable) - Output tokens for LLM call
-- costUsd (DOUBLE, nullable) - Cost in USD of LLM call
-- errorType (VARCHAR, nullable) - Error category (e.g. 'rate_limit')
-- metadata (VARCHAR) - Stringified JSON containing custom fields (e.g. prompt text, inputs/outputs)
+- eventId (UUID)
+- traceId (String)
+- runId (String)
+- timestamp (DateTime64(3))
+- agentName (String)
+- userId (String)
+- eventType (String) - Can be 'trace_started', 'llm_call', 'tool_call', 'error', 'retry', 'trace_completed'
+- stepIndex (Int32)
+- status (Nullable(String)) - Can be 'success', 'failed', 'running'
+- latencyMs (Nullable(Int32)) - Latency of LLM call, tool call, or full trace
+- model (Nullable(String)) - LLM model name (e.g. 'gpt-5.2')
+- toolName (Nullable(String)) - Tool name (e.g. 'web_search')
+- inputTokens (Nullable(Int32)) - Input tokens for LLM call
+- outputTokens (Nullable(Int32)) - Output tokens for LLM call
+- costUsd (Nullable(Float64)) - Cost in USD of LLM call
+- errorType (Nullable(String)) - Error category (e.g. 'rate_limit')
+- metadata (String) - Stringified JSON containing custom fields
 
 Instructions:
 1. Output ONLY the raw SQL SELECT statement. Do not wrap it in markdown code blocks like \`\`\`sql.
-2. The query must be standard DuckDB SQL.
+2. The query must be standard ClickHouse SQL.
 3. Ensure the query is read-only and targets the "events" table.
-4. If time binning is requested, use: date_trunc('hour', timestamp).
-5. Always return clean, human-readable column headers using AS.
+4. If time binning is requested, use: toStartOfHour(timestamp).
+5. Extract JSON metadata using ClickHouse's: JSONExtractString(metadata, 'key').
+6. Always return clean, human-readable column headers using AS.
 
 Convert this request: "${nlQuery}"`;
 
@@ -196,7 +196,6 @@ export async function translateQueryHandler(req: Request, res: Response): Promis
     return;
   }
 
-  // 1. Check NL cache first
   const cachedSql = nlCache.get(nlQuery.toLowerCase());
   if (cachedSql) {
     res.status(200).json({
@@ -207,7 +206,6 @@ export async function translateQueryHandler(req: Request, res: Response): Promis
     return;
   }
 
-  // 2. Check deterministic parser next
   const deterministicSql = parseDeterministic(nlQuery);
   if (deterministicSql) {
     nlCache.set(nlQuery.toLowerCase(), deterministicSql);
@@ -219,11 +217,9 @@ export async function translateQueryHandler(req: Request, res: Response): Promis
     return;
   }
 
-  // 3. Fallback to Gemini LLM
   try {
     const generatedSql = await translateWithGemini(nlQuery);
 
-    // Validate SQL safety before storing/returning
     const safetyCheck = validateSQL(generatedSql);
     if (!safetyCheck.valid) {
       res.status(422).json({
@@ -259,16 +255,14 @@ export async function runQueryHandler(req: Request, res: Response): Promise<void
     return;
   }
 
-  // Validate SQL safety
   const safetyCheck = validateSQL(sql);
   if (!safetyCheck.valid) {
     res.status(403).json({ error: `Forbidden: ${safetyCheck.reason}`, sql });
     return;
   }
 
-  // Dynamically rewrite SQL with filters if provided
   let finalSql = sql;
-  const paramValues: any[] = [];
+  const paramValues: Record<string, any> = {};
 
   if (filters && typeof filters === 'object') {
     const { clauses, params } = buildTraceIdFilters(filters);
@@ -277,9 +271,7 @@ export async function runQueryHandler(req: Request, res: Response): Promise<void
       const subquery = `(SELECT * FROM events WHERE ${clauses.join(' AND ')})`;
       const keywords = ['WHERE', 'GROUP', 'ORDER', 'LIMIT', 'JOIN', 'LEFT', 'RIGHT', 'INNER', 'CROSS', 'ON', 'USING', 'UNION', 'INTERSECT', 'EXCEPT', 'WINDOW', 'HAVING', 'AND', 'OR', 'SELECT', 'WITH'];
       
-      let matchCount = 0;
       finalSql = sql.replace(/\b(from|join)\s+events(?:\s+(?:as\s+)?([a-z0-9_]+))?\b/gi, (match, p1, p2) => {
-        matchCount++;
         if (p2) {
           const upperAlias = p2.toUpperCase();
           if (!keywords.includes(upperAlias)) {
@@ -290,13 +282,10 @@ export async function runQueryHandler(req: Request, res: Response): Promise<void
         return `${p1} ${subquery} AS events`;
       });
       
-      for (let i = 0; i < matchCount; i++) {
-        paramValues.push(...params);
-      }
+      Object.assign(paramValues, params);
     }
   }
 
-  // Check result cache (we use the compiled SQL + stringified parameters as the cache key)
   const cacheKey = finalSql + JSON.stringify(paramValues);
   const cached = resultCache.get(cacheKey);
   if (cached && cached.revision === dbRevision) {
@@ -309,13 +298,11 @@ export async function runQueryHandler(req: Request, res: Response): Promise<void
     return;
   }
 
-  // Run query in DuckDB
   const startTime = Date.now();
   try {
-    const data = await dbEngine.all(finalSql, ...paramValues);
+    const data = await dbEngine.all(finalSql, paramValues);
     const latencyMs = Date.now() - startTime;
 
-    // Cache the result
     resultCache.set(cacheKey, {
       revision: dbRevision,
       data,
@@ -345,22 +332,20 @@ export async function listTracesHandler(req: Request, res: Response): Promise<vo
 
   const { clauses, params } = buildTraceIdFilters({ agentName, status, model, toolName, timeRange });
 
-  // Get unique trace runs summarized
-  // We aggregate everything in a single GROUP BY pass to avoid subqueries and handle incomplete traces
   const sql = `
     SELECT 
       traceId,
-      ANY_VALUE(runId) as runId,
-      COALESCE(MIN(CASE WHEN eventType = 'trace_started' THEN agentName END), ANY_VALUE(agentName)) as agentName,
-      COALESCE(MIN(CASE WHEN eventType = 'trace_started' THEN userId END), ANY_VALUE(userId)) as userId,
-      MIN(timestamp) as startedAt,
-      MAX(CASE WHEN eventType = 'trace_completed' THEN timestamp END) as endedAt,
-      COALESCE(MIN(CASE WHEN eventType = 'trace_completed' THEN status END), 'running') as status,
-      COALESCE(MIN(CASE WHEN eventType = 'trace_completed' THEN latencyMs END), CAST((EPOCH(MAX(timestamp)) - EPOCH(MIN(timestamp))) * 1000 AS INTEGER)) as totalLatencyMs,
-      SUM(costUsd) as totalCostUsd,
-      COUNT(CASE WHEN eventType = 'llm_call' THEN 1 END) as llmCalls,
-      COUNT(CASE WHEN eventType = 'tool_call' THEN 1 END) as toolCalls,
-      COUNT(CASE WHEN eventType = 'error' THEN 1 END) as errorCount
+      any(runId) as runId,
+      coalesce(min(case when eventType = 'trace_started' then agentName end), any(agentName)) as agentName,
+      coalesce(min(case when eventType = 'trace_started' then userId end), any(userId)) as userId,
+      min(timestamp) as startedAt,
+      max(case when eventType = 'trace_completed' then timestamp end) as endedAt,
+      coalesce(min(case when eventType = 'trace_completed' then status end), 'running') as status,
+      coalesce(min(case when eventType = 'trace_completed' then latencyMs end), dateDiff('ms', min(timestamp), max(timestamp))) as totalLatencyMs,
+      sum(costUsd) as totalCostUsd,
+      countIf(eventType = 'llm_call') as llmCalls,
+      countIf(eventType = 'tool_call') as toolCalls,
+      countIf(eventType = 'error') as errorCount
     FROM events
     ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
     GROUP BY traceId
@@ -369,7 +354,7 @@ export async function listTracesHandler(req: Request, res: Response): Promise<vo
   `;
 
   try {
-    const data = await dbEngine.all(sql, ...params);
+    const data = await dbEngine.all(sql, params);
     res.status(200).json({ status: 'success', data });
   } catch (error: any) {
     console.error('[List Traces] Error:', error);
@@ -382,8 +367,8 @@ export async function getTraceDetailsHandler(req: Request, res: Response): Promi
   const { id } = req.params;
 
   try {
-    const sql = `SELECT * FROM events WHERE traceId = ? ORDER BY stepIndex ASC;`;
-    const data = await dbEngine.all(sql, id);
+    const sql = `SELECT * FROM events WHERE traceId = {traceId: String} ORDER BY stepIndex ASC;`;
+    const data = await dbEngine.all(sql, { traceId: id });
 
     if (data.length === 0) {
       res.status(404).json({ error: `Trace ${id} not found.` });
@@ -405,17 +390,17 @@ export async function getKpisHandler(req: Request, res: Response): Promise<void>
 
   const sql = `
     SELECT 
-      COUNT(DISTINCT traceId) as totalTraces,
-      AVG(CASE WHEN eventType = 'trace_completed' THEN latencyMs END) as avgTraceLatencyMs,
-      COUNT(DISTINCT CASE WHEN eventType = 'trace_completed' AND status = 'failed' THEN traceId END) * 100.0 / NULLIF(COUNT(DISTINCT traceId), 0) as errorRate,
-      SUM(costUsd) as totalCostUsd
+      count(DISTINCT traceId) as totalTraces,
+      avg(case when eventType = 'trace_completed' then latencyMs end) as avgTraceLatencyMs,
+      count(DISTINCT case when eventType = 'trace_completed' and status = 'failed' then traceId end) * 100.0 / nullIf(count(DISTINCT traceId), 0) as errorRate,
+      sum(costUsd) as totalCostUsd
     FROM events
     ${clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''}
     ;
   `;
 
   try {
-    const data = await dbEngine.all(sql, ...params);
+    const data = await dbEngine.all(sql, params);
     res.status(200).json({ status: 'success', data: data[0] });
   } catch (error: any) {
     console.error('[Get KPIs] Error:', error);
@@ -426,9 +411,9 @@ export async function getKpisHandler(req: Request, res: Response): Promise<void>
 // 6. Endpoint: /api/meta (Retrieve distinct values of agentName, model, and toolName for sidebar filters)
 export async function getMetadataHandler(req: Request, res: Response): Promise<void> {
   try {
-    const agents = await dbEngine.all(`SELECT DISTINCT agentName FROM events WHERE agentName IS NOT NULL ORDER BY agentName ASC;`);
-    const models = await dbEngine.all(`SELECT DISTINCT model FROM events WHERE model IS NOT NULL ORDER BY model ASC;`);
-    const tools = await dbEngine.all(`SELECT DISTINCT toolName FROM events WHERE toolName IS NOT NULL ORDER BY toolName ASC;`);
+    const agents = await dbEngine.all(`SELECT DISTINCT agentName FROM events WHERE agentName IS NOT NULL AND agentName != '' ORDER BY agentName ASC;`);
+    const models = await dbEngine.all(`SELECT DISTINCT model FROM events WHERE model IS NOT NULL AND model != '' ORDER BY model ASC;`);
+    const tools = await dbEngine.all(`SELECT DISTINCT toolName FROM events WHERE toolName IS NOT NULL AND toolName != '' ORDER BY toolName ASC;`);
 
     res.status(200).json({
       status: 'success',
