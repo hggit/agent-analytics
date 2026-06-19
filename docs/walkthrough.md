@@ -202,3 +202,16 @@ We have successfully expanded the analytics detail panel and introduced advanced
 * **Redesigned Step Card Summary Tab:**
   - Replaced unstructured plain-text lists with structured summary grids containing latency, token allocations, individual costs, and overall accumulated totals.
   - Parses and displays formatted quote sections for input prompts, outputs, decision routes, parameters, error messages, and retry causes directly in the Summary view, eliminating the need to toggle the raw JSON Payload tab for basic inspection.
+
+---
+
+## 11. Interactive Dashboard Synchronization & Chart Drill-downs
+We implemented complete interactive synchronization linking the Custom SVG charts, active search queries, timeline selections, and the Trace Explorer list:
+* **Query-Trace list Synchronization:**
+  - The frontend now extracts `traceId` (or `trace_id`) values directly from active query results (`activeChartData`).
+  - When custom SQL queries or presets (e.g. *Top 10 slowest traces*) return trace data, the Trace Explorer table automatically filters and displays precisely those traces.
+* **Interactive Chart click Drill-downs:**
+  - **Categorical Charts (Bar Chart):** Clicking on any bar (representing a model, agent, status, or tool) automatically sets that dashboard filter in the sidebar, instantly refreshing all analytics.
+  - **Timeline Charts (Line Chart):** Clicking on any time-series slice filters the entire dashboard and Trace Explorer list to display only traces executed within that specific hourly timeline window.
+* **Active Filters Summary Bar:**
+  - Added a visual filter banner right under the main header listing all active sidebar/timeline filter badges with individual clear (`×`) buttons, plus a "Clear All" button for one-click resets.

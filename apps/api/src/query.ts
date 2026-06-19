@@ -77,9 +77,26 @@ export function buildTraceIdFilters(filters: any, tableAlias?: string): { clause
     }
 
     if (minTime) {
-      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE eventType = 'trace_started' AND timestamp >= {timeRangeFilter: DateTime64(3)})`);
+      clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE timestamp >= {timeRangeFilter: DateTime64(3)})`);
       params.timeRangeFilter = minTime.toISOString().replace('T', ' ').replace('Z', '');
     }
+  }
+  if (filters.traceIds) {
+    const ids = typeof filters.traceIds === 'string'
+      ? filters.traceIds.split(',').map((id: string) => id.trim()).filter(Boolean)
+      : Array.isArray(filters.traceIds) ? filters.traceIds : [];
+    if (ids.length > 0) {
+      clauses.push(`${prefix}traceId IN ({traceIdsFilter: Array(String)})`);
+      params.traceIdsFilter = ids;
+    }
+  }
+  if (filters.startTime) {
+    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE timestamp >= {startTimeFilter: DateTime64(3)})`);
+    params.startTimeFilter = filters.startTime.replace('T', ' ').replace('Z', '');
+  }
+  if (filters.endTime) {
+    clauses.push(`${prefix}traceId IN (SELECT DISTINCT traceId FROM events WHERE timestamp <= {endTimeFilter: DateTime64(3)})`);
+    params.endTimeFilter = filters.endTime.replace('T', ' ').replace('Z', '');
   }
 
   return { clauses, params };
@@ -328,9 +345,9 @@ export async function runQueryHandler(req: Request, res: Response): Promise<void
 
 // 3. Endpoint: /api/traces (List recent traces with summary aggregation)
 export async function listTracesHandler(req: Request, res: Response): Promise<void> {
-  const { agentName, status, model, toolName, timeRange } = req.query;
+  const { agentName, status, model, toolName, timeRange, traceIds, startTime, endTime } = req.query;
 
-  const { clauses, params } = buildTraceIdFilters({ agentName, status, model, toolName, timeRange });
+  const { clauses, params } = buildTraceIdFilters({ agentName, status, model, toolName, timeRange, traceIds, startTime, endTime });
 
   const sql = `
     SELECT 
@@ -384,9 +401,9 @@ export async function getTraceDetailsHandler(req: Request, res: Response): Promi
 
 // 5. Endpoint: /api/kpis (Retrieve current aggregated KPIs for KPIs cards)
 export async function getKpisHandler(req: Request, res: Response): Promise<void> {
-  const { agentName, status, model, toolName, timeRange } = req.query;
+  const { agentName, status, model, toolName, timeRange, traceIds, startTime, endTime } = req.query;
 
-  const { clauses, params } = buildTraceIdFilters({ agentName, status, model, toolName, timeRange });
+  const { clauses, params } = buildTraceIdFilters({ agentName, status, model, toolName, timeRange, traceIds, startTime, endTime });
 
   const sql = `
     SELECT 

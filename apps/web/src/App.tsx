@@ -82,6 +82,7 @@ export default function App() {
   const [availableAgents, setAvailableAgents] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [availableTools, setAvailableTools] = useState<string[]>([]);
+  const [timelineFilter, setTimelineFilter] = useState<{ startTime: string; endTime: string; label: string } | null>(null);
 
   // Loading & Error States
   const [isLoading, setIsLoading] = useState(false);
@@ -98,7 +99,7 @@ export default function App() {
       // Set default chart to total runs
       handlePresetClick('Number of runs per hour');
     }
-  }, [agentFilter, statusFilter, modelFilter, toolFilter, timeRangeFilter]);
+  }, [agentFilter, statusFilter, modelFilter, toolFilter, timeRangeFilter, timelineFilter]);
 
   const fetchMetadata = async () => {
     try {
@@ -114,7 +115,43 @@ export default function App() {
     }
   };
 
-  const fetchDashboardData = async () => {
+  const fetchTraces = async (chartDataOverride?: any[]) => {
+    try {
+      const q = new URLSearchParams();
+      if (agentFilter) q.set('agentName', agentFilter);
+      if (statusFilter) q.set('status', statusFilter);
+      if (modelFilter) q.set('model', modelFilter);
+      if (toolFilter) q.set('toolName', toolFilter);
+      if (timeRangeFilter) q.set('timeRange', timeRangeFilter);
+      if (timelineFilter) {
+        q.set('startTime', timelineFilter.startTime);
+        q.set('endTime', timelineFilter.endTime);
+      }
+
+      // Check if we have trace IDs from active chart data to display specifically
+      const currentChartData = chartDataOverride !== undefined ? chartDataOverride : activeChartData;
+      if (currentChartData && currentChartData.length > 0) {
+        const firstRow = currentChartData[0];
+        const traceIdKey = Object.keys(firstRow).find(k => k.toLowerCase() === 'traceid' || k.toLowerCase() === 'trace_id');
+        if (traceIdKey) {
+          const ids = currentChartData.map(row => String(row[traceIdKey])).filter(Boolean);
+          if (ids.length > 0) {
+            q.set('traceIds', ids.join(','));
+          }
+        }
+      }
+
+      const traceRes = await fetch(`/api/traces?${q.toString()}`);
+      if (traceRes.ok) {
+        const res = await traceRes.json();
+        setTraces(res.data || []);
+      }
+    } catch (err) {
+      console.error('Error fetching traces:', err);
+    }
+  };
+
+  const fetchDashboardData = async (chartDataOverride?: any[]) => {
     try {
       // Refresh metadata options dynamically
       fetchMetadata();
@@ -125,6 +162,10 @@ export default function App() {
       if (modelFilter) q.set('model', modelFilter);
       if (toolFilter) q.set('toolName', toolFilter);
       if (timeRangeFilter) q.set('timeRange', timeRangeFilter);
+      if (timelineFilter) {
+        q.set('startTime', timelineFilter.startTime);
+        q.set('endTime', timelineFilter.endTime);
+      }
 
       const kpiRes = await fetch(`/api/kpis?${q.toString()}`);
       if (kpiRes.ok) {
@@ -132,11 +173,7 @@ export default function App() {
         setKpis(res.data || { totalTraces: 0, avgTraceLatencyMs: 0, errorRate: 0, totalCostUsd: 0 });
       }
 
-      const traceRes = await fetch(`/api/traces?${q.toString()}`);
-      if (traceRes.ok) {
-        const res = await traceRes.json();
-        setTraces(res.data || []);
-      }
+      fetchTraces(chartDataOverride);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     }
@@ -157,7 +194,9 @@ export default function App() {
             status: statusFilter || undefined,
             model: modelFilter || undefined,
             toolName: toolFilter || undefined,
-            timeRange: timeRangeFilter || undefined
+            timeRange: timeRangeFilter || undefined,
+            startTime: timelineFilter?.startTime || undefined,
+            endTime: timelineFilter?.endTime || undefined
           }
         })
       });
@@ -166,6 +205,8 @@ export default function App() {
         setActiveChartData(data.data);
         setQueryLatencyMs(data.latencyMs);
         setQuerySql(data.sql);
+        // Force refresh traces using the query output
+        fetchTraces(data.data);
       } else {
         setErrorMsg(data.error || 'Failed to refresh chart query.');
       }
@@ -252,8 +293,8 @@ export default function App() {
         setQueryLatencyMs(data.latencyMs);
         setQuerySql(data.sql);
         setPendingApprovalSql(null);
-        // Refresh metrics cards in case database was updated
-        fetchDashboardData();
+        // Refresh metrics cards in case database was updated, passing new chart data
+        fetchDashboardData(data.data);
       } else {
         setErrorMsg(data.error || data.details || 'SQL Execution failed.');
       }
@@ -293,7 +334,9 @@ export default function App() {
               status: statusFilter || undefined,
               model: modelFilter || undefined,
               toolName: toolFilter || undefined,
-              timeRange: timeRangeFilter || undefined
+              timeRange: timeRangeFilter || undefined,
+              startTime: timelineFilter?.startTime || undefined,
+              endTime: timelineFilter?.endTime || undefined
             }
           })
         });
@@ -302,6 +345,8 @@ export default function App() {
           setActiveChartData(runData.data);
           setQueryLatencyMs(runData.latencyMs);
           setQuerySql(runData.sql);
+          // Refresh metrics cards and trace lists using the new preset output
+          fetchDashboardData(runData.data);
         } else {
           setErrorMsg(runData.error || 'Failed to run preset query.');
         }
@@ -430,6 +475,56 @@ export default function App() {
           </div>
         </header>
 
+        {/* Active Filters Summary Bar */}
+        {(agentFilter || statusFilter || modelFilter || toolFilter || timelineFilter) && (
+          <div className="active-filters-bar">
+            <span className="active-filters-title">Active Filters:</span>
+            {timelineFilter && (
+              <span className="filter-badge time">
+                📅 Time: {timelineFilter.label}
+                <button className="filter-badge-clear" onClick={() => setTimelineFilter(null)}>×</button>
+              </span>
+            )}
+            {agentFilter && (
+              <span className="filter-badge">
+                🤖 Agent: {agentFilter}
+                <button className="filter-badge-clear" onClick={() => setAgentFilter('')}>×</button>
+              </span>
+            )}
+            {statusFilter && (
+              <span className="filter-badge">
+                🟢 Status: {statusFilter}
+                <button className="filter-badge-clear" onClick={() => setStatusFilter('')}>×</button>
+              </span>
+            )}
+            {modelFilter && (
+              <span className="filter-badge">
+                🧠 Model: {modelFilter}
+                <button className="filter-badge-clear" onClick={() => setModelFilter('')}>×</button>
+              </span>
+            )}
+            {toolFilter && (
+              <span className="filter-badge">
+                🛠️ Tool: {toolFilter}
+                <button className="filter-badge-clear" onClick={() => setToolFilter('')}>×</button>
+              </span>
+            )}
+            <button 
+              className="btn-secondary" 
+              style={{ padding: '4px 8px', fontSize: '11px', marginLeft: 'auto', borderRadius: '6px' }}
+              onClick={() => {
+                setAgentFilter('');
+                setStatusFilter('');
+                setModelFilter('');
+                setToolFilter('');
+                setTimelineFilter(null);
+              }}
+            >
+              Clear All
+            </button>
+          </div>
+        )}
+
         {/* KPI metrics cards */}
         <section className="kpi-grid">
           <div className="kpi-card">
@@ -550,7 +645,26 @@ export default function App() {
             </div>
 
             <div className="chart-canvas">
-              <SVGChart data={activeChartData} />
+              <SVGChart data={activeChartData} onPointClick={(clickEvent) => {
+                if (clickEvent.type === 'category') {
+                  const label = clickEvent.category;
+                  if (availableAgents.includes(label)) {
+                    setAgentFilter(label);
+                  } else if (availableModels.includes(label)) {
+                    setModelFilter(label);
+                  } else if (availableTools.includes(label)) {
+                    setToolFilter(label);
+                  } else if (label === 'success' || label === 'failed' || label === 'running') {
+                    setStatusFilter(label);
+                  }
+                } else if (clickEvent.type === 'time') {
+                  setTimelineFilter({
+                    startTime: clickEvent.startTime,
+                    endTime: clickEvent.endTime,
+                    label: clickEvent.label
+                  });
+                }
+              }} />
             </div>
 
             {/* Collapsible SQL Visualizer */}
@@ -764,7 +878,7 @@ export default function App() {
 }
 
 // Adaptive SVG Chart component to render queries dynamically
-function SVGChart({ data }: { data: any[] }) {
+function SVGChart({ data, onPointClick }: { data: any[]; onPointClick: (clickEvent: any) => void }) {
   if (!data || data.length === 0) {
     return (
       <div style={{ display: 'flex', height: '100%', width: '100%', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)' }}>
@@ -782,7 +896,7 @@ function SVGChart({ data }: { data: any[] }) {
   const valueKeys = keys.filter(k => k !== timeKey && typeof data[0][k] === 'number');
 
   if (timeKey && valueKeys.length > 0) {
-    return <SVGLineChart data={data} timeKey={timeKey} valKey={valueKeys[0]} />;
+    return <SVGLineChart data={data} timeKey={timeKey} valKey={valueKeys[0]} onPointClick={onPointClick} />;
   }
 
   // Otherwise draw a Bar Chart
@@ -790,7 +904,7 @@ function SVGChart({ data }: { data: any[] }) {
   const numKey = keys.find(k => typeof data[0][k] === 'number');
 
   if (catKey && numKey) {
-    return <SVGBarChart data={data} catKey={catKey} valKey={numKey} />;
+    return <SVGBarChart data={data} catKey={catKey} valKey={numKey} onPointClick={onPointClick} />;
   }
 
   // Fallback to simple table view
@@ -815,7 +929,7 @@ function SVGChart({ data }: { data: any[] }) {
 }
 
 // 1. Line/Area Chart component using raw SVG
-function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string; valKey: string }) {
+function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; timeKey: string; valKey: string; onPointClick: (clickEvent: any) => void }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const width = 800;
@@ -936,6 +1050,18 @@ function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string;
               className="chart-slice-trigger"
               onMouseEnter={() => setHoveredIdx(i)}
               onMouseLeave={() => setHoveredIdx(null)}
+              onClick={() => {
+                const item = data[i];
+                const date = new Date(item[timeKey]);
+                const startTime = date.toISOString();
+                const endTime = new Date(date.getTime() + 60 * 60 * 1000).toISOString();
+                onPointClick({
+                  type: 'time',
+                  startTime,
+                  endTime,
+                  label: date.toLocaleString()
+                });
+              }}
             />
           );
         })}
@@ -945,7 +1071,7 @@ function SVGLineChart({ data, timeKey, valKey }: { data: any[]; timeKey: string;
 }
 
 // 2. Bar Chart component using raw SVG
-function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; valKey: string }) {
+function SVGBarChart({ data, catKey, valKey, onPointClick }: { data: any[]; catKey: string; valKey: string; onPointClick: (clickEvent: any) => void }) {
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null);
 
   const width = 800;
@@ -998,6 +1124,13 @@ function SVGBarChart({ data, catKey, valKey }: { data: any[]; catKey: string; va
               onMouseEnter={() => setHoveredIdx(i)}
               onMouseLeave={() => setHoveredIdx(null)}
               style={{ cursor: 'pointer' }}
+              onClick={() => {
+                onPointClick({
+                  type: 'category',
+                  category: item.label,
+                  value: item.val
+                });
+              }}
             >
               {/* Bar rectangle */}
               <rect
