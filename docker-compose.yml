@@ -28,3 +28,29 @@ services:
       nofile:
         soft: 262144
         hard: 262144
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    container_name: api_server
+    ports:
+      - "3000:3000"
+    environment:
+      - CLICKHOUSE_HOST=http://clickhouse:8123
+      - KAFKA_BROKER=redpanda:29092
+    depends_on:
+      - clickhouse
+      - redpanda
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    container_name: web_dashboard
+    ports:
+      - "5173:5173"
+    environment:
+      - API_URL=http://api:3000
+    depends_on:
+      - api
