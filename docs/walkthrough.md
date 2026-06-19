@@ -224,3 +224,4 @@ We implemented a metrics monitoring system tracking ingest throughput and databa
 * **Storage Engine Telemetry:** Exposes ClickHouse storage efficiency by querying the native `system.parts` table to fetch the exact rows count and compression size on disk (in KB/MB) for the active `events` table.
 * **Fallbacks:** Automatically falls back to simple table row counts if running in memory or in test mode under DuckDB.
 * **Metrics Endpoint:** Registered a new GET endpoint `/api/pipeline/metrics` in [index.ts](file:///Users/him/Desktop/mini-posthog-task-main/apps/api/src/index.ts) allowing you to inspect real-time queue lag, batch latencies, and storage metrics.
+* **Automated Tests:** Expanded the test suite in [run-tests.ts](file:///Users/him/Desktop/mini-posthog-task-main/tests/run-tests.ts) (Test 5) to query the `/api/pipeline/metrics` controller, validating metrics tracking, event insert counts, and mock database storage output.
