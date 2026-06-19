@@ -54,6 +54,28 @@ const INSIGHT_PRESETS = [
   { text: 'Average steps per run by outcome', icon: '🚶' }
 ];
 
+// Safe date parsing and formatting helper functions to prevent browser-specific unhandled RangeErrors
+const parseSafeDate = (val: any): Date | null => {
+  if (!val) return null;
+  let str = String(val);
+  // Handle space separator in SQL datetime strings (common in ClickHouse/DuckDB)
+  if (str.includes(' ') && !str.includes('T')) {
+    str = str.replace(' ', 'T');
+  }
+  const date = new Date(str);
+  return isNaN(date.getTime()) ? null : date;
+};
+
+const formatSafeLocaleString = (val: any): string => {
+  const date = parseSafeDate(val);
+  return date ? date.toLocaleString() : String(val || '');
+};
+
+const formatSafeTimeString = (val: any, options?: Intl.DateTimeFormatOptions): string => {
+  const date = parseSafeDate(val);
+  return date ? date.toLocaleTimeString([], options) : String(val || '');
+};
+
 export default function App() {
   // Filters State
   const [agentFilter, setAgentFilter] = useState('');
@@ -721,7 +743,7 @@ export default function App() {
                     <tr key={t.traceId} onClick={() => handleTraceClick(t.traceId)} style={{ background: selectedTraceId === t.traceId ? 'rgba(139, 92, 246, 0.08)' : '' }}>
                       <td style={{ fontWeight: '600' }}>{t.agentName}</td>
                       <td>{t.userId}</td>
-                      <td style={{ color: 'var(--text-secondary)' }}>{new Date(t.startedAt).toLocaleString()}</td>
+                      <td style={{ color: 'var(--text-secondary)' }}>{formatSafeLocaleString(t.startedAt)}</td>
                       <td>
                         <span className={`status-badge status-${t.status}`}>
                           {t.status}
@@ -758,7 +780,8 @@ export default function App() {
           <div className="timeline-body">
             {(() => {
               const sortedEvents = [...selectedTraceEvents].sort((a, b) => a.stepIndex - b.stepIndex);
-              const startTime = sortedEvents.length > 0 ? new Date(sortedEvents[0].timestamp).getTime() : 0;
+              const firstDate = sortedEvents.length > 0 ? parseSafeDate(sortedEvents[0].timestamp) : null;
+              const startTime = firstDate ? firstDate.getTime() : 0;
               let runningCost = 0;
               let runningTokens = 0;
               let runningInputTokens = 0;
@@ -773,7 +796,8 @@ export default function App() {
                 runningInputTokens += evt.inputTokens || 0;
                 runningOutputTokens += evt.outputTokens || 0;
 
-                const elapsedMs = startTime ? new Date(evt.timestamp).getTime() - startTime : 0;
+                const evtDate = parseSafeDate(evt.timestamp);
+                const elapsedMs = startTime && evtDate ? evtDate.getTime() - startTime : 0;
                 let throughput = 0;
                 if (evt.eventType === 'llm_call' && evt.latencyMs) {
                   throughput = tokens / (evt.latencyMs / 1000);
@@ -791,7 +815,8 @@ export default function App() {
 
               // Trace overall statistics
               const lastEvent = enrichedEvents[enrichedEvents.length - 1];
-              const totalDurationSec = startTime && lastEvent ? (new Date(lastEvent.timestamp).getTime() - startTime) / 1000 : 0;
+              const lastDate = lastEvent ? parseSafeDate(lastEvent.timestamp) : null;
+              const totalDurationSec = startTime && lastDate ? (lastDate.getTime() - startTime) / 1000 : 0;
               const totalCost = runningCost;
               const totalTokens = runningTokens;
               const totalInputTokens = runningInputTokens;
@@ -941,8 +966,8 @@ function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; ti
 
   // Extract and parse coordinates
   const points = data.map((d) => ({
-    xLabel: new Date(d[timeKey]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    val: Number(d[valKey])
+    xLabel: formatSafeTimeString(d[timeKey], { hour: '2-digit', minute: '2-digit' }),
+    val: Number(d[valKey]) || 0
   }));
 
   const maxVal = Math.max(...points.map(p => p.val), 1) * 1.1; // 10% headroom
@@ -1024,15 +1049,22 @@ function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; ti
               fill="var(--color-primary)"
               className="chart-hover-dot"
             />
-            <g transform={`translate(${getX(hoveredIdx) + (hoveredIdx > points.length / 2 ? -130 : 10)}, ${getY(points[hoveredIdx].val) - 20})`} style={{ pointerEvents: 'none' }}>
-              <rect x="0" y="0" width="120" height="42" rx="6" className="chart-tooltip-bg" />
-              <text x="10" y="18" fill="var(--text-secondary)" fontSize="9" fontWeight="500">
-                {points[hoveredIdx].xLabel}
-              </text>
-              <text x="10" y="32" fill="var(--text-primary)" fontSize="11" fontWeight="700">
-                {points[hoveredIdx].val >= 1000 ? points[hoveredIdx].val.toLocaleString() : points[hoveredIdx].val.toFixed(2)}
-              </text>
-            </g>
+            {(() => {
+              const dotY = getY(points[hoveredIdx].val);
+              const tooltipY = dotY < 60 ? dotY + 15 : dotY - 50;
+              const tooltipX = getX(hoveredIdx) + (hoveredIdx > points.length / 2 ? -130 : 10);
+              return (
+                <g transform={`translate(${tooltipX}, ${tooltipY})`} style={{ pointerEvents: 'none' }}>
+                  <rect x="0" y="0" width="120" height="42" rx="6" className="chart-tooltip-bg" />
+                  <text x="10" y="18" fill="var(--text-secondary)" fontSize="9" fontWeight="500">
+                    {points[hoveredIdx].xLabel}
+                  </text>
+                  <text x="10" y="32" fill="var(--text-primary)" fontSize="11" fontWeight="700">
+                    {points[hoveredIdx].val >= 1000 ? points[hoveredIdx].val.toLocaleString() : points[hoveredIdx].val.toFixed(2)}
+                  </text>
+                </g>
+              );
+            })()}
           </g>
         )}
 
@@ -1052,7 +1084,8 @@ function SVGLineChart({ data, timeKey, valKey, onPointClick }: { data: any[]; ti
               onMouseLeave={() => setHoveredIdx(null)}
               onClick={() => {
                 const item = data[i];
-                const date = new Date(item[timeKey]);
+                const date = parseSafeDate(item[timeKey]);
+                if (!date) return;
                 const startTime = date.toISOString();
                 const endTime = new Date(date.getTime() + 60 * 60 * 1000).toISOString();
                 onPointClick({
@@ -1166,7 +1199,7 @@ function SVGBarChart({ data, catKey, valKey, onPointClick }: { data: any[]; catK
 
               {/* Hover Tooltip overlay */}
               {isHovered && (
-                <g transform={`translate(${x + barWidth / 2 - 60}, ${y - 38})`} style={{ pointerEvents: 'none' }}>
+                <g transform={`translate(${x + barWidth / 2 - 60}, ${y < 40 ? y + 10 : y - 38})`} style={{ pointerEvents: 'none' }}>
                   <rect x="0" y="0" width="120" height="28" rx="4" className="chart-tooltip-bg" />
                   <text x="60" y="17" fill="var(--text-primary)" fontSize="9" fontWeight="700" textAnchor="middle">
                     {item.val.toLocaleString(undefined, { maximumFractionDigits: 4 })}
@@ -1357,7 +1390,7 @@ function TraceStepCard({ evt, isActive, onCardClick }: TraceStepCardProps) {
                   </div>
                   <div className="step-summary-metric">
                     <span className="step-metric-label">Timestamp</span>
-                    <span className="step-metric-value">{new Date(evt.timestamp).toLocaleTimeString()}</span>
+                    <span className="step-metric-value">{formatSafeTimeString(evt.timestamp)}</span>
                   </div>
                 </div>
                 {metadataObj.input && (
@@ -1548,7 +1581,7 @@ function TraceStepCard({ evt, isActive, onCardClick }: TraceStepCardProps) {
         )}
 
         <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '6px' }}>
-          {new Date(evt.timestamp).toLocaleTimeString()}
+          {formatSafeTimeString(evt.timestamp)}
         </div>
       </div>
     </div>
